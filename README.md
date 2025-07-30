@@ -1,6 +1,4 @@
-
-
-## 0. Humoid BTC
+##  Humoid BTC
 
 ### 0.1 Project Summary
 
