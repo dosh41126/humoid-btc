@@ -187,7 +187,6 @@ class SecureEnclave:
                 pass
         self._buffers.clear()
 
-
 HE_ENABLED_DEFAULT = True
 
 class CKKSManager:
@@ -278,7 +277,6 @@ class CKKSManager:
 
         return self._pack_one_vector_slots(q)
 
-
     def encrypt_candidate_group_b64(self, x_vec: np.ndarray) -> str:
 
         self._ensure_loaded()
@@ -291,7 +289,6 @@ class CKKSManager:
     def encrypt_query_b64(self, q_vec: np.ndarray) -> str:
 
         return self.encrypt_candidate_group_b64(q_vec)
-
 
     def _sum_fold_block64(self, ct: "ts.CKKSVector") -> "ts.CKKSVector":
         for shift in (1,2,4,8,16,32):
