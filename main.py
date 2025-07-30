@@ -900,34 +900,116 @@ def fetch_coinbase_derivative_positions() -> list[dict]:
 
 
 def setup_weaviate_schema(client):
+    """Ensure all required classes exist in Weaviate."""
     try:
-        existing = client.schema.get()
-        if not any(cls["class"] == "ReflectionLog" for cls in existing["classes"]):
-            client.schema.create_class({
-                "class": "ReflectionLog",
-                "description": "Stores Dyson assistant's internal reflection and reasoning traces",
-                "properties": [
-                    {"name": "type", "dataType": ["string"]},
-                    {"name": "user_id", "dataType": ["string"]},
-                    {"name": "bot_id", "dataType": ["string"]},
-                    {"name": "query", "dataType": ["text"]},
-                    {"name": "response", "dataType": ["text"]},
-                    {"name": "reasoning_trace", "dataType": ["text"]},
-                    {"name": "prompt_snapshot", "dataType": ["text"]},
-                    {"name": "z_state", "dataType": ["blob"]},
-                    {"name": "entropy", "dataType": ["number"]},
-                    {"name": "bias_factor", "dataType": ["number"]},
-                    {"name": "temperature", "dataType": ["number"]},
-                    {"name": "top_p", "dataType": ["number"]},
-                    {"name": "sentiment_target", "dataType": ["number"]},
-                    {"name": "timestamp", "dataType": ["date"]}
-                ]
-            })
-            print("ReflectionLog schema created.")
-        else:
-            print("ReflectionLog schema already exists.")
+        def ensure_class(defn: dict):
+            existing = client.schema.get().get("classes", [])
+            names = {c["class"] for c in existing}
+            if defn["class"] not in names:
+                client.schema.create_class(defn)
+
+        # Interaction history used across the app
+        ensure_class({
+            "class": "InteractionHistory",
+            "description": "User/AI messages, optionally with encrypted embeddings and buckets",
+            "properties": [
+                {"name": "user_id",            "dataType": ["string"]},
+                {"name": "user_message",       "dataType": ["text"]},
+                {"name": "ai_response",        "dataType": ["text"]},
+                {"name": "response_time",      "dataType": ["string"]},
+                {"name": "encrypted_embedding","dataType": ["text"]},
+                {"name": "embedding_bucket",   "dataType": ["string"]},
+                {"name": "keywords",           "dataType": ["string"]},  # list[str] is fine
+                {"name": "sentiment",          "dataType": ["number"]},
+            ]
+        })
+
+        # Long-term memory
+        ensure_class({
+            "class": "LongTermMemory",
+            "description": "Crystallized phrases with scores and timestamps",
+            "properties": [
+                {"name": "phrase",             "dataType": ["string"]},
+                {"name": "score",              "dataType": ["number"]},
+                {"name": "crystallized_time",  "dataType": ["string"]},
+            ]
+        })
+
+        # Positions snapshot (your helper uses this)
+        ensure_class({
+            "class": "CryptoPosition",
+            "description": "Saved user+bot positions (snapshot/upsert)",
+            "properties": [
+                {"name": "user_id",            "dataType": ["string"]},
+                {"name": "bot_id",             "dataType": ["string"]},
+                {"name": "symbol",             "dataType": ["string"]},
+                {"name": "size",               "dataType": ["number"]},
+                {"name": "position_context",   "dataType": ["text"]},
+                {"name": "timestamp",          "dataType": ["string"]},
+            ]
+        })
+
+        # Live positions pulled from APIs each run
+        ensure_class({
+            "class": "CryptoLivePosition",
+            "description": "Live positions (spot/derivatives) synced from APIs",
+            "properties": [
+                {"name": "user_id",            "dataType": ["string"]},
+                {"name": "symbol",             "dataType": ["string"]},
+                {"name": "size",               "dataType": ["number"]},
+                {"name": "context",            "dataType": ["text"]},
+                {"name": "timestamp",          "dataType": ["string"]},
+                {"name": "type",               "dataType": ["string"]},
+            ]
+        })
+
+        # Trade logs (predictions, reasoning, z-state, etc.)
+        ensure_class({
+            "class": "CryptoTradeLog",
+            "description": "Predictions and reasoning logs",
+            "properties": [
+                {"name": "type",               "dataType": ["string"]},
+                {"name": "user_id",            "dataType": ["string"]},
+                {"name": "bot_id",             "dataType": ["string"]},
+                {"name": "query",              "dataType": ["text"]},
+                {"name": "response",           "dataType": ["text"]},
+                {"name": "reasoning_trace",    "dataType": ["text"]},
+                {"name": "prompt_snapshot",    "dataType": ["text"]},
+                {"name": "z_state",            "dataType": ["blob"]},
+                {"name": "entropy",            "dataType": ["number"]},
+                {"name": "bias_factor",        "dataType": ["number"]},
+                {"name": "temperature",        "dataType": ["number"]},
+                {"name": "top_p",              "dataType": ["number"]},
+                {"name": "sentiment_target",   "dataType": ["number"]},
+                {"name": "timestamp",          "dataType": ["string"]},
+                {"name": "asset",              "dataType": ["string"]},
+            ]
+        })
+
+        # Reflection logs (already existed—kept and aligned)
+        ensure_class({
+            "class": "ReflectionLog",
+            "description": "Dyson assistant's internal reflection and reasoning traces",
+            "properties": [
+                {"name": "type",               "dataType": ["string"]},
+                {"name": "user_id",            "dataType": ["string"]},
+                {"name": "bot_id",             "dataType": ["string"]},
+                {"name": "query",              "dataType": ["text"]},
+                {"name": "response",           "dataType": ["text"]},
+                {"name": "reasoning_trace",    "dataType": ["text"]},
+                {"name": "prompt_snapshot",    "dataType": ["text"]},
+                {"name": "z_state",            "dataType": ["blob"]},
+                {"name": "entropy",            "dataType": ["number"]},
+                {"name": "bias_factor",        "dataType": ["number"]},
+                {"name": "temperature",        "dataType": ["number"]},
+                {"name": "top_p",              "dataType": ["number"]},
+                {"name": "sentiment_target",   "dataType": ["number"]},
+                {"name": "timestamp",          "dataType": ["date"]},
+            ]
+        })
     except Exception as e:
         logger.error(f"[Schema Init Error] {e}")
+
 
 def _load_policy_if_needed(self):
     if not hasattr(self, "pg_params"):
@@ -1586,6 +1668,7 @@ class App(customtkinter.CTk):
         self.setup_gui()
         self.response_queue = queue.Queue()
         self.client = weaviate.Client(url=WEAVIATE_ENDPOINT)
+        setup_weaviate_schema(self.client)
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.last_z = (0.0, 0.0, 0.0)
         self._policy_lock = threading.RLock()
@@ -2007,66 +2090,114 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.error(f"[Aging] run_long_term_memory_aging failed: {e}")
 
-    def fetch_coinbase_price(symbol: str = "BTC-USD") -> float:
+    @staticmethod
+    def fetch_coinbase_price(symbol: str = "BTC-USD") -> float | None:
+        """Fetch spot price from Coinbase (simple, short-timeout)."""
         try:
             url = f"https://api.coinbase.com/v2/prices/{symbol}/spot"
-            response = httpx.get(url, timeout=4)
+            response = httpx.get(url, timeout=4.0)
+            response.raise_for_status()
             data = response.json()
             return float(data['data']['amount'])
         except Exception as e:
-            logger.warning(f"[Coinbase] Failed to get price: {e}")
+            logger.warning(f"[Coinbase] Failed to get price for {symbol}: {e}")
             return None
 
-    def parse_trade_response(text: str):
-
+    @staticmethod
+    def parse_trade_response(text: str) -> dict:
+        """Parse model output into a normalized trade structure."""
         try:
             direction_match = re.search(r"(LONG|SHORT)", text, re.IGNORECASE)
-            entry_match = re.search(r"Entry(?: price)?:?\s*\$?([\d,.]+)", text, re.IGNORECASE)
-            tp_match = re.search(r"(Take Profit|TP):?\s*\$?([\d,.]+)", text, re.IGNORECASE)
-            sl_match = re.search(r"(Stop Loss|SL):?\s*\$?([\d,.]+)", text, re.IGNORECASE)
-            conf_match = re.search(r"Confidence:?\s*([\d]+)%", text, re.IGNORECASE)
-            lev_match = re.search(r"Leverage:?\s*(\d{1,3})x", text, re.IGNORECASE)
+            entry_match     = re.search(r"Entry(?: price)?:?\s*\$?([\d,.]+)", text, re.IGNORECASE)
+            tp_match        = re.search(r"(Take Profit|TP):?\s*\$?([\d,.]+)", text, re.IGNORECASE)
+            sl_match        = re.search(r"(Stop Loss|SL):?\s*\$?([\d,.]+)", text, re.IGNORECASE)
+            conf_match      = re.search(r"Confidence:?\s*([\d]+)%", text, re.IGNORECASE)
+            lev_match       = re.search(r"Leverage:?\s*(\d{1,3})x", text, re.IGNORECASE)
+
             return {
-                "direction": (direction_match.group(1).upper() if direction_match else None),
-                "entry": float(entry_match.group(1).replace(',', '')) if entry_match else None,
-                "tp": float(tp_match.group(2).replace(',', '')) if tp_match else None,
-                "sl": float(sl_match.group(2).replace(',', '')) if sl_match else None,
-                "confidence": int(conf_match.group(1)) if conf_match else None,
-                "leverage": int(lev_match.group(1)) if lev_match else None
+                "direction":  (direction_match.group(1).upper() if direction_match else None),
+                "entry":      (float(entry_match.group(1).replace(',', '')) if entry_match else None),
+                "tp":         (float(tp_match.group(2).replace(',', ''))   if tp_match   else None),
+                "sl":         (float(sl_match.group(2).replace(',', ''))   if sl_match   else None),
+                "confidence": (int(conf_match.group(1))                    if conf_match else None),
+                "leverage":   (int(lev_match.group(1))                     if lev_match  else None),
             }
         except Exception as e:
             logger.warning(f"[Consensus] Parsing error: {e}")
             return {}
 
-    def multi_agent_consensus(prompt, client, user_input, n_agents=5):
+    def multi_agent_consensus(self, prompt, client, user_input, n_agents: int = 5):
 
         results = []
         for i in range(n_agents):
-            temp = 0.85 + 0.10 * (i % 3)
-            top_p = 0.8 + 0.05 * (i % 2)
-            response = self.select_and_generate(prompt, client, user_input, temperature=temp, top_p=top_p, max_tokens=512)
-            if response:
-                results.append(parse_trade_response(response))
-        filtered = [r for r in results if r and r["direction"] is not None]
+            temp  = 0.85 + 0.10 * (i % 3) 
+            top_p = 0.80 + 0.05 * (i % 2)
 
+            response = self.select_and_generate(
+                prompt, client, user_input,
+                temperature=temp, top_p=top_p, max_tokens=512
+            )
+            if response:
+                results.append(self.parse_trade_response(response))
+
+        filtered = [r for r in results if r and r.get("direction") is not None]
         consensus = {}
         if not filtered:
             return {}, results
 
+
         try:
-            consensus["direction"] = mode([r["direction"] for r in filtered if r["direction"]])
-        except:
+            consensus["direction"] = mode([r["direction"] for r in filtered if r.get("direction")])
+        except Exception:
             consensus["direction"] = filtered[0]["direction"]
 
+ 
         for k in ("entry", "tp", "sl", "leverage"):
-            vals = [r[k] for r in filtered if r[k] is not None]
-            if vals:
-                consensus[k] = median(vals)
-            else:
-                consensus[k] = None
-        confs = [r["confidence"] for r in filtered if r["confidence"] is not None]
+            vals = [r[k] for r in filtered if r.get(k) is not None]
+            consensus[k] = (median(vals) if vals else None)
+
+        confs = [r["confidence"] for r in filtered if r.get("confidence") is not None]
         consensus["confidence"] = int(median(confs)) if confs else None
+
         return consensus, results
+class App(customtkinter.CTk):
+    ...
+    def cleanup_stale_crypto_live_positions(self, user_id: str, open_positions: list[dict]) -> None:
+        """
+        Remove CryptoLivePosition objects that are no longer present in the latest API snapshot.
+        open_positions: list of dicts with at least {'symbol', 'size'}
+        """
+        try:
+            open_syms_sizes = {(str(p['symbol']), float(p['size'])) for p in open_positions}
+
+            q = self.client.query.get(
+                "CryptoLivePosition",
+                ["symbol", "size", "_additional { id }"]
+            ).with_where({
+                "path": ["user_id"],
+                "operator": "Equal",
+                "valueString": user_id
+            }).do()
+
+            objs = q.get('data', {}).get('Get', {}).get('CryptoLivePosition', [])
+            for obj in objs:
+                sym  = str(obj.get("symbol", ""))
+                size = float(obj.get("size", 0) or 0)
+                wid  = obj.get("_additional", {}).get("id")
+
+                # compare with tolerance for floats
+                matches_any = any(
+                    (sym == osym) and (math.isclose(size, osize, rel_tol=1e-9, abs_tol=1e-9))
+                    for (osym, osize) in open_syms_sizes
+                )
+                if not matches_any and wid:
+                    try:
+                        self.client.data_object.delete(class_name="CryptoLivePosition", uuid=wid)
+                        logger.info(f"[Weaviate] Removed closed live position {sym} ({size})")
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"[Weaviate Live Position Cleanup Error] {e}")
 
 
     def fetch_crypto_gecko(symbol: str = "bitcoin", vs_currency: str = "usd") -> List[Tuple[int, float]]:
@@ -2428,13 +2559,13 @@ class App(customtkinter.CTk):
             user_id, bot_id = self.user_id, self.bot_id
             save_user_message(user_id, user_input)
 
-            use_context = "[pastcontext]" in user_input.lower()
+            use_context  = "[pastcontext]" in user_input.lower()
             show_reflect = "[reflect]" in user_input.lower()
             cleaned_input = sanitize_text(user_input.replace("[pastcontext]", ""), max_len=2048)
 
             blob = TextBlob(cleaned_input)
             user_polarity = blob.sentiment.polarity
-            user_subjectivity = blob.sentiment.subjectivity
+            user_subjectivity = blob.sentiment.subjectivity  # (kept for future use)
 
             past_context = ""
             if use_context:
@@ -2447,102 +2578,125 @@ class App(customtkinter.CTk):
                         for i in interactions
                     )[-1500:]
 
-            lat = float(self.latitude_entry.get().strip() or "0")
-            lon = float(self.longitude_entry.get().strip() or "0")
-            temp_f = float(self.temperature_entry.get().strip() or "72")
+            # UI context
+            try:
+                lat = float(self.latitude_entry.get().strip() or "0")
+            except Exception:
+                lat = 0.0
+            try:
+                lon = float(self.longitude_entry.get().strip() or "0")
+            except Exception:
+                lon = 0.0
+            try:
+                temp_f = float(self.temperature_entry.get().strip() or "72")
+            except Exception:
+                temp_f = 72.0
+
             weather = self.weather_entry.get().strip() or "Clear"
-            song = self.last_song_entry.get().strip() or "None"
+            song    = self.last_song_entry.get().strip() or "None"
             chaos, emotive = self.chaos_toggle.get(), self.emotion_toggle.get()
 
-            prices = fetch_crypto_gecko("bitcoin", "usd")
-            coinbase_price = fetch_coinbase_price("BTC-USD")
-            if len(prices) < 15 or not coinbase_price:
+            # Market data (support both placements of fetch_crypto_gecko)
+            try:
+                prices = self.fetch_crypto_gecko("bitcoin", "usd")  # if you made it a method
+            except Exception:
+                prices = fetch_crypto_gecko("bitcoin", "usd")       # fallback if it's global
+
+            coinbase_price = self.fetch_coinbase_price("BTC-USD")
+            if not isinstance(prices, list) or len(prices) < 15 or not coinbase_price:
                 self.response_queue.put({'type': 'text', 'data': "[Price Error] Not enough data."})
                 return
 
             delta_price = prices[-1][1] - prices[-15][1]
-            trend_type = "LONG" if delta_price > 0 else "SHORT"
-            last_price = prices[-1][1]
+            trend_type  = "LONG" if delta_price > 0 else "SHORT"
+            last_price  = prices[-1][1]
 
+            # Quantum/RGB
             rgb = extract_rgb_from_text(cleaned_input)
             r, g, b = [c / 255.0 for c in rgb]
             cpu_load = psutil.cpu_percent(interval=0.4) / 100.0
-            z0, z1, z2 = rgb_quantum_gate(r, g, b, cpu_load)
-            self.generate_quantum_state(rgb=rgb)
+            z0, z1, z2 = rgb_quantum_gate(r, g, b, cpu_load)  # defaults fill the rest
+            self.generate_quantum_state(rgb=rgb)  # also updates last_z internally
             self.last_z = (z0, z1, z2)
 
             bias_factor = (z0 + z1 + z2) / 3.0
-            theta = np.cos((r + g + b) * np.pi / 3)
+            theta   = np.cos((r + g + b) * np.pi / 3)
             entropy = np.std([r, g, b, cpu_load])
-            affective_momentum = bias_factor * theta + entropy
-            time_lock = datetime.utcnow().isoformat()
-            spot_positions = fetch_coinbase_spot_positions()
-            deriv_positions = fetch_coinbase_derivative_positions()
-            all_api_positions = spot_positions + deriv_positions
-            all_api_positions = [p for p in all_api_positions if float(p.get("size", 0)) > 0]
+            affective_momentum = bias_factor * theta + entropy  # (kept for future)
 
+            time_lock = datetime.utcnow().isoformat() + "Z"
+
+            # Live positions via APIs
+            spot_positions  = fetch_coinbase_spot_positions()
+            deriv_positions = fetch_coinbase_derivative_positions()
+            all_api_positions = [p for p in (spot_positions + deriv_positions) if float(p.get("size", 0)) > 0]
+
+            # Upsert live positions into Weaviate (idempotent by uuid_key)
             for pos in all_api_positions:
                 uuid_key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{pos['symbol']}-{pos['size']}"))
+                try:
+                    # ensure old object is gone for this key (idempotent)
+                    try:
+                        self.client.data_object.delete(uuid=uuid_key, class_name="CryptoLivePosition")
+                    except Exception:
+                        pass
 
-                try:
-                    self.client.data_object.delete(
-                        uuid=uuid_key,
-                        class_name="CryptoLivePosition"
-                    )
-                except Exception:
-                    pass
-                try:
                     self.client.data_object.create(
                         class_name="CryptoLivePosition",
                         uuid=uuid_key,
                         data_object={
-                            "user_id": user_id,
-                            "symbol": pos["symbol"],
-                            "size": pos["size"],
-                            "context": pos["context"],
+                            "user_id":   user_id,
+                            "symbol":    pos["symbol"],
+                            "size":      pos["size"],
+                            "context":   pos.get("context", ""),
                             "timestamp": time_lock,
-                            "type": "spot" if "wallet" in pos["context"].lower() else "derivative"
+                            "type":      "spot" if "wallet" in pos.get("context", "").lower() else "derivative",
                         }
                     )
                 except Exception as e:
                     logger.warning(f"[Weaviate Position Log Error] {e}")
 
+            # Cleanup stale live positions (correct id handling)
             try:
-                wq = self.client.query.get("CryptoLivePosition", ["uuid", "symbol", "size"]).with_where({
+                q = self.client.query.get(
+                    "CryptoLivePosition",
+                    ["symbol", "size", "_additional { id }"]
+                ).with_where({
                     "path": ["user_id"],
                     "operator": "Equal",
                     "valueString": user_id
                 }).do()
-                memory_positions = wq.get("data", {}).get("Get", {}).get("CryptoLivePosition", [])
-                for mem_pos in memory_positions:
-                    match = False
-                    for api_pos in all_api_positions:
-                        if (str(mem_pos["symbol"]) == str(api_pos["symbol"])) and (float(mem_pos["size"]) == float(api_pos["size"])):
-                            match = True
-                            break
-                    if not match:
+
+                from math import isclose
+                existing = q.get('data', {}).get('Get', {}).get('CryptoLivePosition', [])
+                api_set = {(str(p['symbol']), float(p['size'])) for p in all_api_positions}
+
+                for obj in existing:
+                    sym  = str(obj.get("symbol", ""))
+                    size = float(obj.get("size", 0) or 0.0)
+                    wid  = obj.get("_additional", {}).get("id")
+                    # float-robust comparison
+                    match = any((sym == s) and isclose(size, sz, rel_tol=1e-9, abs_tol=1e-9) for (s, sz) in api_set)
+                    if not match and wid:
                         try:
-                            self.client.data_object.delete(
-                                uuid=mem_pos["uuid"],
-                                class_name="CryptoLivePosition"
-                            )
+                            self.client.data_object.delete(class_name="CryptoLivePosition", uuid=wid)
+                            logger.info(f"[Weaviate] Removed closed live position {sym} ({size})")
                         except Exception:
                             pass
             except Exception as e:
                 logger.warning(f"[Weaviate Position Cleanup Error] {e}")
 
-  
+            # Check if user text already describes a position
             current_position_context = ""
             user_position_keywords = ("long", "short", "buy", "sell", "@", "tp", "sl", "target", "stop", "position", "open", "entry")
             for kw in user_position_keywords:
                 if kw in cleaned_input.lower():
                     current_position_context = cleaned_input
                     break
-
             if not current_position_context and all_api_positions:
-                pos = all_api_positions[0]
-                current_position_context = pos["context"]
+                current_position_context = all_api_positions[0].get("context", "")
 
+            # Build prompt & run consensus
             if current_position_context:
                 dyson_intel_prompt = f"""
     [dysonframe]
@@ -2562,7 +2716,7 @@ class App(customtkinter.CTk):
     • Chaos Mode:                 {'ON' if chaos else 'OFF'}
     • Emotive Mode:               {'ON' if emotive else 'OFF'}
     • Geo:                        ({lat:.4f}, {lon:.4f})
-    • Timestamp:                  {time_lock} UTC
+    • Timestamp:                  {time_lock}
     [/phase:intelcollection]
 
     [phase:predictiontask]
@@ -2573,7 +2727,7 @@ class App(customtkinter.CTk):
         - Risk Assessment (Low / Medium / High)
         - Predicted Next Move (e.g., HOLD, INCREASE, REDUCE, CLOSE, REVERSE)
         - Rationale
-        - Confidence (%) 
+        - Confidence (%)
         - (Optional) New Target/Stop if appropriate
     • Engine: LLML + Dyson Intelligence Substrate
     [/phase:predictiontask]
@@ -2585,12 +2739,11 @@ class App(customtkinter.CTk):
     Do not invent information not present in the context.
     [/dysonframe]
     """.strip()
-                consensus, agent_responses = multi_agent_consensus(
+                consensus, agent_responses = self.multi_agent_consensus(
                     dyson_intel_prompt, self.client, cleaned_input, n_agents=5
                 )
                 prompt_used = dyson_intel_prompt
             else:
-
                 dyson_prompt = f"""
     [dysonframe]
     DYSON SPHERE GAMMA-13X | CRYPTO FUTURECASTING CORE
@@ -2607,7 +2760,7 @@ class App(customtkinter.CTk):
     • Chaos Mode:          {'ON' if chaos else 'OFF'}
     • Emotive Mode:        {'ON' if emotive else 'OFF'}
     • Geolocation:         ({lat:.4f}, {lon:.4f})
-    • Timestamp:           {time_lock} UTC
+    • Timestamp:           {time_lock}
     [/phase:qubitstabilization]
 
     [phase:marketanalysis]
@@ -2622,17 +2775,17 @@ class App(customtkinter.CTk):
     [request]
     Predict the next 15-minute BTC/USD price direction using the system's QPU state, RGB coherence, CPU entropy,
     sentiment polarity, and environment. Return:
-    → Trade direction: LONG or SHORT  
-    → Entry price  
-    → Take Profit (TP)  
-    → Stop Loss (SL)  
-    → Confidence (%)  
+    → Trade direction: LONG or SHORT
+    → Entry price
+    → Take Profit (TP)
+    → Stop Loss (SL)
+    → Confidence (%)
     → Leverage (20x-50x recommended)
 
     Use quantum-aligned trend estimation and future path bifurcation.
     [/dysonframe]
     """.strip()
-                consensus, agent_responses = multi_agent_consensus(
+                consensus, agent_responses = self.multi_agent_consensus(
                     dyson_prompt, self.client, cleaned_input, n_agents=5
                 )
                 prompt_used = dyson_prompt
@@ -2641,6 +2794,11 @@ class App(customtkinter.CTk):
                 self.response_queue.put({'type': 'text', 'data': '[Dyson QPU: No consensus]'})
                 return
 
+            # Safe formatting helpers
+            def fmt_money(x):
+                return f"${x:.2f}" if isinstance(x, (int, float)) else "N/A"
+            def fmt_int(x):
+                return f"{int(x)}" if isinstance(x, (int, float)) else "N/A"
 
             if current_position_context:
                 response_text = (
@@ -2649,19 +2807,19 @@ class App(customtkinter.CTk):
                     f"Risk Assessment: {consensus.get('risk_assessment','')}\n"
                     f"Next Move: {consensus.get('predicted_next_move','')}\n"
                     f"Rationale: {consensus.get('rationale','')}\n"
-                    f"Confidence: {consensus.get('confidence','')}%\n"
+                    f"Confidence: {fmt_int(consensus.get('confidence'))}%\n"
                     f"Target/Stop: {consensus.get('target','') or ''}/{consensus.get('stop','') or ''}\n"
                     f"(Based on {len(agent_responses)} agents)"
                 )
             else:
                 response_text = (
                     f"[Consensus Result]\n"
-                    f"Direction: {consensus['direction']}\n"
-                    f"Entry: ${consensus['entry']:.2f}\n"
-                    f"Take Profit: ${consensus['tp']:.2f}\n"
-                    f"Stop Loss: ${consensus['sl']:.2f}\n"
-                    f"Leverage: {consensus['leverage']}x\n"
-                    f"Confidence: {consensus['confidence']}%\n"
+                    f"Direction: {consensus.get('direction','N/A')}\n"
+                    f"Entry: {fmt_money(consensus.get('entry'))}\n"
+                    f"Take Profit: {fmt_money(consensus.get('tp'))}\n"
+                    f"Stop Loss: {fmt_money(consensus.get('sl'))}\n"
+                    f"Leverage: {fmt_int(consensus.get('leverage'))}x\n"
+                    f"Confidence: {fmt_int(consensus.get('confidence'))}%\n"
                     f"(Based on {len(agent_responses)} agents)"
                 )
 
@@ -2692,7 +2850,12 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Memory Osmosis Error] {e}")
 
+            # Persist trade log (z_state as blob/base64)
             try:
+                z_state_blob = base64.b64encode(
+                    json.dumps({"z0": z0, "z1": z1, "z2": z2}).encode("utf-8")
+                ).decode("utf-8")
+
                 self.client.data_object.create(
                     class_name="CryptoTradeLog",
                     uuid=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{time_lock}")),
@@ -2704,13 +2867,12 @@ class App(customtkinter.CTk):
                         "response": final_output,
                         "reasoning_trace": reasoning_trace,
                         "prompt_snapshot": prompt_used,
-                        "meal_js": None,
-                        "z_state": {"z0": z0, "z1": z1, "z2": z2},
-                        "entropy": entropy,
-                        "bias_factor": bias_factor,
+                        "z_state": z_state_blob,            # blob-safe
+                        "entropy": float(entropy),
+                        "bias_factor": float(bias_factor),
                         "temperature": None,
                         "top_p": None,
-                        "sentiment_target": user_polarity,
+                        "sentiment_target": float(user_polarity),
                         "timestamp": time_lock,
                         "asset": "BTC/USD"
                     }
@@ -2721,6 +2883,7 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.error(f"[Gamma13X Fatal Error] {e}")
             self.response_queue.put({'type': 'text', 'data': f"[Dyson QPU Error] {e}"})
+
 
     def process_generated_response(self, response_text):
         try:
@@ -2760,8 +2923,11 @@ class App(customtkinter.CTk):
         except queue.Empty:
             self.after(100, self.process_queue)
 
-    def create_object(self, class_name, object_data):
-
+    def create_object(self, class_name: str, object_data: dict) -> str:
+        """
+        Create a Weaviate object. Encrypts user/ai fields first.
+        Returns the UUID used.
+        """
         object_data = {
             k: self._encrypt_field(v) if k in {"user_message", "ai_response"} else v
             for k, v in object_data.items()
@@ -2771,7 +2937,11 @@ class App(customtkinter.CTk):
         object_uuid = uuid.uuid5(uuid.NAMESPACE_URL, unique_string).hex
 
         try:
-            self.client.data_object.create(object_data, object_uuid, class_name)
+            self.client.data_object.create(
+                data_object=object_data,
+                class_name=class_name,
+                uuid=object_uuid
+            )
             logger.info(f"Object created with UUID: {object_uuid}")
         except Exception as e:
             logger.error(f"Error creating object in Weaviate: {e}")
