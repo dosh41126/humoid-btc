@@ -908,7 +908,7 @@ def setup_weaviate_schema(client):
             if defn["class"] not in names:
                 client.schema.create_class(defn)
 
-        # Interaction history used across the app
+    
         ensure_class({
             "class": "InteractionHistory",
             "description": "User/AI messages, optionally with encrypted embeddings and buckets",
@@ -919,12 +919,12 @@ def setup_weaviate_schema(client):
                 {"name": "response_time",      "dataType": ["string"]},
                 {"name": "encrypted_embedding","dataType": ["text"]},
                 {"name": "embedding_bucket",   "dataType": ["string"]},
-                {"name": "keywords",           "dataType": ["string"]},  # list[str] is fine
+                {"name": "keywords",           "dataType": ["string"]},  
                 {"name": "sentiment",          "dataType": ["number"]},
             ]
         })
 
-        # Long-term memory
+
         ensure_class({
             "class": "LongTermMemory",
             "description": "Crystallized phrases with scores and timestamps",
@@ -935,7 +935,7 @@ def setup_weaviate_schema(client):
             ]
         })
 
-        # Positions snapshot (your helper uses this)
+      
         ensure_class({
             "class": "CryptoPosition",
             "description": "Saved user+bot positions (snapshot/upsert)",
@@ -949,7 +949,7 @@ def setup_weaviate_schema(client):
             ]
         })
 
-        # Live positions pulled from APIs each run
+       
         ensure_class({
             "class": "CryptoLivePosition",
             "description": "Live positions (spot/derivatives) synced from APIs",
@@ -963,7 +963,7 @@ def setup_weaviate_schema(client):
             ]
         })
 
-        # Trade logs (predictions, reasoning, z-state, etc.)
+     
         ensure_class({
             "class": "CryptoTradeLog",
             "description": "Predictions and reasoning logs",
@@ -986,7 +986,7 @@ def setup_weaviate_schema(client):
             ]
         })
 
-        # Reflection logs (already existed—kept and aligned)
+
         ensure_class({
             "class": "ReflectionLog",
             "description": "Dyson assistant's internal reflection and reasoning traces",
@@ -2565,7 +2565,7 @@ class App(customtkinter.CTk):
 
             blob = TextBlob(cleaned_input)
             user_polarity = blob.sentiment.polarity
-            user_subjectivity = blob.sentiment.subjectivity  # (kept for future use)
+            user_subjectivity = blob.sentiment.subjectivity  
 
             past_context = ""
             if use_context:
@@ -2578,7 +2578,7 @@ class App(customtkinter.CTk):
                         for i in interactions
                     )[-1500:]
 
-            # UI context
+
             try:
                 lat = float(self.latitude_entry.get().strip() or "0")
             except Exception:
@@ -2596,11 +2596,11 @@ class App(customtkinter.CTk):
             song    = self.last_song_entry.get().strip() or "None"
             chaos, emotive = self.chaos_toggle.get(), self.emotion_toggle.get()
 
-            # Market data (support both placements of fetch_crypto_gecko)
+
             try:
-                prices = self.fetch_crypto_gecko("bitcoin", "usd")  # if you made it a method
+                prices = self.fetch_crypto_gecko("bitcoin", "usd")  
             except Exception:
-                prices = fetch_crypto_gecko("bitcoin", "usd")       # fallback if it's global
+                prices = fetch_crypto_gecko("bitcoin", "usd")     
 
             coinbase_price = self.fetch_coinbase_price("BTC-USD")
             if not isinstance(prices, list) or len(prices) < 15 or not coinbase_price:
@@ -2611,31 +2611,31 @@ class App(customtkinter.CTk):
             trend_type  = "LONG" if delta_price > 0 else "SHORT"
             last_price  = prices[-1][1]
 
-            # Quantum/RGB
+      
             rgb = extract_rgb_from_text(cleaned_input)
             r, g, b = [c / 255.0 for c in rgb]
             cpu_load = psutil.cpu_percent(interval=0.4) / 100.0
-            z0, z1, z2 = rgb_quantum_gate(r, g, b, cpu_load)  # defaults fill the rest
-            self.generate_quantum_state(rgb=rgb)  # also updates last_z internally
+            z0, z1, z2 = rgb_quantum_gate(r, g, b, cpu_load) 
+            self.generate_quantum_state(rgb=rgb) 
             self.last_z = (z0, z1, z2)
 
             bias_factor = (z0 + z1 + z2) / 3.0
             theta   = np.cos((r + g + b) * np.pi / 3)
             entropy = np.std([r, g, b, cpu_load])
-            affective_momentum = bias_factor * theta + entropy  # (kept for future)
+            affective_momentum = bias_factor * theta + entropy  
 
             time_lock = datetime.utcnow().isoformat() + "Z"
 
-            # Live positions via APIs
+
             spot_positions  = fetch_coinbase_spot_positions()
             deriv_positions = fetch_coinbase_derivative_positions()
             all_api_positions = [p for p in (spot_positions + deriv_positions) if float(p.get("size", 0)) > 0]
 
-            # Upsert live positions into Weaviate (idempotent by uuid_key)
+
             for pos in all_api_positions:
                 uuid_key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{pos['symbol']}-{pos['size']}"))
                 try:
-                    # ensure old object is gone for this key (idempotent)
+   
                     try:
                         self.client.data_object.delete(uuid=uuid_key, class_name="CryptoLivePosition")
                     except Exception:
@@ -2656,7 +2656,7 @@ class App(customtkinter.CTk):
                 except Exception as e:
                     logger.warning(f"[Weaviate Position Log Error] {e}")
 
-            # Cleanup stale live positions (correct id handling)
+
             try:
                 q = self.client.query.get(
                     "CryptoLivePosition",
@@ -2675,7 +2675,7 @@ class App(customtkinter.CTk):
                     sym  = str(obj.get("symbol", ""))
                     size = float(obj.get("size", 0) or 0.0)
                     wid  = obj.get("_additional", {}).get("id")
-                    # float-robust comparison
+
                     match = any((sym == s) and isclose(size, sz, rel_tol=1e-9, abs_tol=1e-9) for (s, sz) in api_set)
                     if not match and wid:
                         try:
@@ -2686,7 +2686,7 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Weaviate Position Cleanup Error] {e}")
 
-            # Check if user text already describes a position
+    
             current_position_context = ""
             user_position_keywords = ("long", "short", "buy", "sell", "@", "tp", "sl", "target", "stop", "position", "open", "entry")
             for kw in user_position_keywords:
@@ -2696,7 +2696,7 @@ class App(customtkinter.CTk):
             if not current_position_context and all_api_positions:
                 current_position_context = all_api_positions[0].get("context", "")
 
-            # Build prompt & run consensus
+
             if current_position_context:
                 dyson_intel_prompt = f"""
     [dysonframe]
@@ -2794,7 +2794,7 @@ class App(customtkinter.CTk):
                 self.response_queue.put({'type': 'text', 'data': '[Dyson QPU: No consensus]'})
                 return
 
-            # Safe formatting helpers
+ 
             def fmt_money(x):
                 return f"${x:.2f}" if isinstance(x, (int, float)) else "N/A"
             def fmt_int(x):
@@ -2850,7 +2850,7 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Memory Osmosis Error] {e}")
 
-            # Persist trade log (z_state as blob/base64)
+
             try:
                 z_state_blob = base64.b64encode(
                     json.dumps({"z0": z0, "z1": z1, "z2": z2}).encode("utf-8")
@@ -2867,7 +2867,7 @@ class App(customtkinter.CTk):
                         "response": final_output,
                         "reasoning_trace": reasoning_trace,
                         "prompt_snapshot": prompt_used,
-                        "z_state": z_state_blob,            # blob-safe
+                        "z_state": z_state_blob,        
                         "entropy": float(entropy),
                         "bias_factor": float(bias_factor),
                         "temperature": None,
@@ -2924,10 +2924,7 @@ class App(customtkinter.CTk):
             self.after(100, self.process_queue)
 
     def create_object(self, class_name: str, object_data: dict) -> str:
-        """
-        Create a Weaviate object. Encrypts user/ai fields first.
-        Returns the UUID used.
-        """
+
         object_data = {
             k: self._encrypt_field(v) if k in {"user_message", "ai_response"} else v
             for k, v in object_data.items()
