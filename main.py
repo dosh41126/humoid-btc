@@ -1,3 +1,116 @@
+# =============================================================================
+# Dyson Sphere Quantum Oracle – Unified Agent System (Single File Release)
+# =============================================================================
+#
+# TABLE OF CONTENTS
+#
+# 0.  Meta & System Overview
+#     0.1 Project Summary
+#     0.2 Key Features
+#     0.3 Quickstart / Runtime Notes
+#
+# 1.  Imports, Environment, and Global Constants
+#     1.1 Standard Library Imports
+#     1.2 Third-Party & ML Libraries
+#     1.3 System/Hardware Config (Paths, Devices, Env Vars)
+#     1.4 Global Settings & Thresholds
+#
+# 2.  Cryptography & Secure Enclave
+#     2.1 AES-GCM/Argon2 Config
+#     2.2 Vault Format & Key Rotation
+#     2.3 Secure KeyManager Class
+#     2.4 Encrypted Environment Variables
+#     2.5 Self-Mutating Keys & Entropy Measurement
+#
+# 3.  Text Preprocessing & Input Sanitation
+#     3.1 NLTK Resource Download/Validation
+#     3.2 Text Sanitization (bleach, regex, prompt injection)
+#     3.3 Tokenization, POS Tagging, and Embedding Utilities
+#     3.4 Secure Prompt Construction
+#
+# 4.  Advanced Vector Memory & Homomorphic Embeddings
+#     4.1 Vector Encryption Pipeline
+#     4.2 SimHash Bucketing & Locality-Sensitive Hashing
+#     4.3 Rotation & Quantization Operations
+#     4.4 SecureEnclave Context Manager
+#     4.5 FHEv2 Embedding Encryption/Decryption
+#
+# 5.  Topological Memory Manifold & Crystallization
+#     5.1 Laplacian Graph Embedding
+#     5.2 Crystallized Phrase Logic (Scoring, Aging)
+#     5.3 Geodesic Memory Retrieval
+#     5.4 Manifold Maintenance & Rebuilding
+#
+# 6.  Persistence Layers
+#     6.1 SQLite Local Storage (Tables, Migration)
+#     6.2 Weaviate Client & Schema Bootstrapping
+#     6.3 Hybrid Record Upsert/Delete/Query
+#     6.4 Record AAD Contexts (for encryption)
+#
+# 7.  LLM Integration & Prompt Engineering
+#     7.1 Llama.cpp Model Setup & Execution
+#     7.2 Prompt Chunking, Memory Drift, and Attention Windows
+#     7.3 Role/Token Detection and Output Type Inference
+#     7.4 Output Postprocessing (Coherence, Entropy Filters)
+#     7.5 Multi-Agent Consensus Pipeline (Ensembling)
+#
+# 8.  Quantum State Integration (PennyLane, RGB Gates)
+#     8.1 QNode Device Setup
+#     8.2 Quantum-Driven Memory & Reasoning
+#     8.3 RGB Extraction from Language/Sentiment
+#     8.4 Quantum Gate Definition & Measurement
+#     8.5 Z-State Management Across UI Cycles
+#
+# 9.  External Data APIs & Context Sources
+#     9.1 Coinbase API (Spot & Derivatives)
+#     9.2 CoinGecko Price History Integration
+#     9.3 Open-Meteo Weather Fetch
+#     9.4 Live System Telemetry (CPU, etc.)
+#
+# 10. GUI & User Interface Logic
+#     10.1 CustomTkinter Style & Appearance
+#     10.2 Sidebar/Settings Frame Construction
+#     10.3 Main Conversation Pane (Text/Scrollbox)
+#     10.4 Input Handling, Event Binding, Async Queue
+#     10.5 Dynamic Fields (Lat/Lon, Weather, Event Type, etc.)
+#     10.6 Live Status Displays (Quantum State, Errors)
+#
+# 11. Agentic Reasoning, Policy, and RL Head
+#     11.1 Policy File Management (Load, Reload, Save)
+#     11.2 REINFORCE/PG Parameter Update
+#     11.3 Bias, Entropy, and Dynamic Sampling
+#     11.4 Policy Sampling per User Turn
+#
+# 12. Memory Management & Long-Term Aging
+#     12.1 Score Decay and Half-Life Logic
+#     12.2 Memory Purging & Crystallization Events
+#     12.3 Manifold Rebuilding on Memory Shifts
+#     12.4 Ongoing Aging Scheduler
+#
+# 13. API, Data, and UI Utilities
+#     13.1 Keyword/Noun Extraction
+#     13.2 Summarization & Sentiment Pipelines
+#     13.3 UUID Generation & Validation Helpers
+#     13.4 General Error/Exception Handlers
+#
+# 14. Logging, Debugging, and Diagnostics
+#     14.1 Logger Setup & Usage Patterns
+#     14.2 Error Reporting & Silent Fail Policy
+#     14.3 Runtime Self-Check (Init Status)
+#
+# 15. Main App Loop & Entry Point
+#     15.1 `if __name__ == "__main__"` Boot Logic
+#     15.2 Init Sequence (UserID, DB, GUI)
+#     15.3 Shutdown Hooks and Cleanup
+#
+# 16. Future Extensions (Optional Sections)
+#     16.1 Lottery/Sports/Custom Prediction Hooks
+#     16.2 Multi-User/Role Segregation
+#     16.3 Plugin Architecture Suggestions
+#
+# =============================================================================
+
+
 import tkinter as tk
 import customtkinter
 import threading
