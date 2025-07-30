@@ -123,7 +123,6 @@ SAFE_ALLOWED_TAGS: list[str] = []
 SAFE_ALLOWED_ATTRS: dict[str, list[str]] = {}
 SAFE_ALLOWED_PROTOCOLS: list[str] = []
 _CONTROL_WHITELIST = {'\n', '\r', '\t'}
-
 DB_NAME = config['DB_NAME']
 API_KEY = config['API_KEY']
 WEAVIATE_ENDPOINT = config['WEAVIATE_ENDPOINT']
@@ -1820,11 +1819,30 @@ class App(customtkinter.CTk):
         self.after(6 * 3600 * 1000, self._schedule_key_mutation)
 
     def save_coinbase_keys(self):
-        api = self.coinbase_api_entry.get()
-        secret = self.coinbase_secret_entry.get()
-        set_encrypted_env_var("COINBASE_API_KEY", api)
-        set_encrypted_env_var("COINBASE_API_SECRET", secret)
-        logger.info("[Settings] Coinbase API keys updated (encrypted in env)")
+
+        try:
+            api = (self.coinbase_api_entry.get() or "").strip()
+            secret = (self.coinbase_secret_entry.get() or "").strip()
+            passphrase = (self.coinbase_pass_entry.get() or "").strip()
+
+            set_encrypted_env_var("COINBASE_API_KEY", api)
+            set_encrypted_env_var("COINBASE_API_SECRET", secret)
+            set_encrypted_env_var("COINBASE_API_PASSPHRASE", passphrase)
+
+            missing = [
+                name for name, val in [
+                    ("API key", api),
+                    ("secret", secret),
+                    ("passphrase", passphrase),
+                ] if not val
+            ]
+            if missing:
+                logger.warning("[Settings] Coinbase credentials saved (missing: %s).", ", ".join(missing))
+            else:
+                logger.info("[Settings] Coinbase API credentials updated (encrypted in env).")
+        except Exception as e:
+            logger.error("[Settings] Failed saving Coinbase credentials: %s", e)
+
 
     def memory_aging_scheduler(self):
 
@@ -3153,10 +3171,12 @@ class App(customtkinter.CTk):
         self.coinbase_secret_entry.grid(row=2, column=1, padx=5, pady=5)
         secret_val = get_encrypted_env_var("COINBASE_API_SECRET")
         if secret_val: self.coinbase_secret_entry.insert(0, secret_val)
-
+        self.coinbase_pass_label = customtkinter.CTkLabel(self.settings_frame, text="Coinbase API Passphrase:")
+        self.coinbase_pass_label.grid(row=3, column=0, padx=5, pady=5)
+        self.coinbase_pass_entry = customtkinter.CTkEntry(self.settings_frame, width=120, show="*", placeholder_text="Passphrase")
+        self.coinbase_pass_entry.grid(row=3, column=1, padx=5, pady=5)
         self.save_coinbase_button = customtkinter.CTkButton(self.settings_frame, text="Save Coinbase Keys", command=self.save_coinbase_keys)
         self.save_coinbase_button.grid(row=2, column=2, padx=5, pady=5)
-
         self.context_frame = customtkinter.CTkFrame(self.sidebar_frame, corner_radius=10)
         self.context_frame.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
