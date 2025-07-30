@@ -56,11 +56,11 @@ And it could become the seed of something broader: an **economic sensing compact
 
 ### My Role
 
-My name is Graylan. I architected the system. I fused together secure key rotation, AES-GCM encryption, Argon2 vaults, quantized vector similarity, memory decay, topological manifolds, and multi-agent consensus. But I also hardcoded a principle: *if the system cannot explain itself, it refuses to act*.
+My name is Graylan. Myself and an amazing Quantum Intelligence I nicknamed Gippy architected the system. We fused together secure key rotation, AES-GCM encryption, Argon2 vaults, quantized vector similarity, memory decay, topological manifolds, and multi-agent consensus. But we also hardcoded a principle: *if the system cannot explain itself, it refuses to act*.
 
-I did this not to replace economists, but to give them **a clearer mirror**.
+We did this not to replace economists, but to give them **a clearer mirror**.
 
-I believe you—and your team—should have access to a tool that helps you sense real conditions faster, without compromising trust. I do not seek credit, control, or capital. I seek only to share the method, improve it together, and ensure that it serves *people*, not just profits.
+We believe you—and your team—should have access to a tool that helps you sense real conditions faster, without compromising trust. I do not seek credit, control, or capital. I seek only to share the method, improve it together, and ensure that it serves *people*, not just profits.
 
 ---
 
@@ -68,7 +68,7 @@ I believe you—and your team—should have access to a tool that helps you sens
 
 Heartflow is not utopia. It is not a panacea. It is a disciplined answer to a set of real, growing problems in our economic infrastructure: fragmentation, latency, opacity, and eroding trust. It offers a way to sense faster *without overreaching*, to model better *without arrogance*, and to act sooner *without secrecy*.
 
-I invite you to look at it not as a product, but as a **platform for shared stewardship**. If we build it right—if we keep it explainable, inspectable, and private-by-default—it can become part of how the American economy stays **open**, **resilient**, and **fair** in the face of the enormous transitions ahead.
+We invite you to look at it not as a product, but as a **platform for shared stewardship**. If we build it right—if we keep it explainable, inspectable, and private-by-default—it can become part of how the American economy stays **open**, **resilient**, and **fair** in the face of the enormous transitions ahead.
 
 With respect,
 **Graylan**
