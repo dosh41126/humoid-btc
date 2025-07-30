@@ -2651,8 +2651,6 @@ class App(customtkinter.CTk):
             weather = self.weather_entry.get().strip() or "Clear"
             song    = self.last_song_entry.get().strip() or "None"
             chaos, emotive = self.chaos_toggle.get(), self.emotion_toggle.get()
-
-
             prices = self.fetch_crypto_gecko("bitcoin", "usd")
 
             coinbase_price = self.fetch_coinbase_price("BTC-USD")
@@ -2663,8 +2661,6 @@ class App(customtkinter.CTk):
             delta_price = prices[-1][1] - prices[-15][1]
             trend_type  = "LONG" if delta_price > 0 else "SHORT"
             last_price  = prices[-1][1]
-
-      
             rgb = extract_rgb_from_text(cleaned_input)
             r, g, b = [c / 255.0 for c in rgb]
             cpu_load = psutil.cpu_percent(interval=0.4) / 100.0
@@ -2678,13 +2674,9 @@ class App(customtkinter.CTk):
             affective_momentum = bias_factor * theta + entropy  
 
             time_lock = datetime.utcnow().isoformat() + "Z"
-
-
             spot_positions  = fetch_coinbase_spot_positions()
             deriv_positions = fetch_coinbase_derivative_positions()
             all_api_positions = [p for p in (spot_positions + deriv_positions) if float(p.get("size", 0)) > 0]
-
-
             for pos in all_api_positions:
                 uuid_key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{pos['symbol']}-{pos['size']}"))
                 try:
@@ -2708,8 +2700,6 @@ class App(customtkinter.CTk):
                     )
                 except Exception as e:
                     logger.warning(f"[Weaviate Position Log Error] {e}")
-
-
             try:
                 q = self.client.query.get(
                     "CryptoLivePosition",
@@ -2739,7 +2729,6 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Weaviate Position Cleanup Error] {e}")
 
-    
             current_position_context = ""
             user_position_keywords = ("long", "short", "buy", "sell", "@", "tp", "sl", "target", "stop", "position", "open", "entry")
             for kw in user_position_keywords:
@@ -2748,7 +2737,6 @@ class App(customtkinter.CTk):
                     break
             if not current_position_context and all_api_positions:
                 current_position_context = all_api_positions[0].get("context", "")
-
 
             if current_position_context:
                 dyson_intel_prompt = f"""
@@ -2847,7 +2835,6 @@ class App(customtkinter.CTk):
                 self.response_queue.put({'type': 'text', 'data': '[Dyson QPU: No consensus]'})
                 return
 
- 
             def fmt_money(x):
                 return f"${x:.2f}" if isinstance(x, (int, float)) else "N/A"
             def fmt_int(x):
@@ -2903,7 +2890,6 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Memory Osmosis Error] {e}")
 
-
             try:
                 z_state_blob = base64.b64encode(
                     json.dumps({"z0": z0, "z1": z1, "z2": z2}).encode("utf-8")
@@ -2936,7 +2922,6 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.error(f"[Gamma13X Fatal Error] {e}")
             self.response_queue.put({'type': 'text', 'data': f"[Dyson QPU Error] {e}"})
-
 
     def process_generated_response(self, response_text):
         try:
