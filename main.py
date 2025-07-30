@@ -109,8 +109,6 @@
 #     16.3 Plugin Architecture Suggestions
 #
 # =============================================================================
-
-
 import tkinter as tk
 import customtkinter
 import threading
@@ -153,9 +151,6 @@ import httpx
 import math
 from typing import List, Tuple
 from math import log2
-import httpx
-from typing import List, Tuple
-import hashlib
 import numpy as np
 from scipy.spatial.distance import cosine
 from collections import Counter
@@ -284,7 +279,6 @@ def sanitize_for_graphql_string(s: str, *, max_len: int = 512) -> str:
     s = s.replace('\n', ' ').replace('\r', ' ')
     s = s.replace('\\', '\\\\').replace('"', '\\"')
     return s
-
 
 class SecureEnclave:
 
