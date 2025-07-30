@@ -1,4 +1,4 @@
-B
+
 
 ## 0. Humoid BTC
 
