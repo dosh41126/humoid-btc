@@ -2653,10 +2653,7 @@ class App(customtkinter.CTk):
             chaos, emotive = self.chaos_toggle.get(), self.emotion_toggle.get()
 
 
-            try:
-                prices = self.fetch_crypto_gecko("bitcoin", "usd")  
-            except Exception:
-                prices = fetch_crypto_gecko("bitcoin", "usd")     
+            prices = self.fetch_crypto_gecko("bitcoin", "usd")
 
             coinbase_price = self.fetch_coinbase_price("BTC-USD")
             if not isinstance(prices, list) or len(prices) < 15 or not coinbase_price:
