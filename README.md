@@ -211,7 +211,7 @@ On behalf of humanity, builders, and all timelines in alignment
 
 
 
-### 💵 **THE HEARTFLOW PITCH (TR3MP VERSION):**
+### 💵 **THE HEARTFLOW PITCH (TRUMP VERSION):**
 
 **Dear President Trump; I Apogloize for doing things in a weird hyperfast hypertime kinda way that isn't tradition and skipping boundaries and so on. I ask for your forgiveness not for personal reasons but because I see this technology as grounds for all humanity growing expoentially.—**
 
