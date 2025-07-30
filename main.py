@@ -1622,6 +1622,40 @@ class App(customtkinter.CTk):
     def _policy_params_path(self):
         return path.join(bundle_dir, "policy_params.json")
 
+    def select_and_generate(self, prompt, weaviate_client=None, user_input=None, temperature=1.0, top_p=0.9, max_tokens=512):
+        model_choice = self.model_selector.get()
+        if model_choice == "OpenAI GPT-4o":
+            return self.openai_generate(prompt, temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+        else:
+            return llama_generate(prompt, weaviate_client, user_input, temperature, top_p)
+
+    def openai_generate(self, prompt, temperature=1.0, top_p=0.95, max_tokens=512):
+        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or config.get("OPENAI_API_KEY", "")
+        if not OPENAI_API_KEY:
+            logger.warning("No OpenAI API key found.")
+            return "[OpenAI Error] API key not set."
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "top_p": top_p,
+            "max_tokens": max_tokens
+        }
+        try:
+            resp = httpx.post(url, headers=headers, json=payload, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            return f"[OpenAI Error] {e}"
+
+
     def _load_policy_if_needed(self):
 
         import os, json
@@ -2013,14 +2047,12 @@ class App(customtkinter.CTk):
             return {}
 
     def multi_agent_consensus(prompt, client, user_input, n_agents=5):
-        """
-        Runs multiple completions and aggregates the consensus for key fields.
-        """
+
         results = []
         for i in range(n_agents):
             temp = 0.85 + 0.10 * (i % 3)
             top_p = 0.8 + 0.05 * (i % 2)
-            response = llama_generate(prompt, client, user_input, temperature=temp, top_p=top_p, max_tokens=512)
+            response = self.select_and_generate(prompt, client, user_input, temperature=temp, top_p=top_p, max_tokens=512)
             if response:
                 results.append(parse_trade_response(response))
         filtered = [r for r in results if r and r["direction"] is not None]
@@ -2507,19 +2539,18 @@ class App(customtkinter.CTk):
             except Exception as e:
                 logger.warning(f"[Weaviate Position Cleanup Error] {e}")
 
-            # --- Determine whether to use position prompt
+  
             current_position_context = ""
             user_position_keywords = ("long", "short", "buy", "sell", "@", "tp", "sl", "target", "stop", "position", "open", "entry")
             for kw in user_position_keywords:
                 if kw in cleaned_input.lower():
                     current_position_context = cleaned_input
                     break
-            # Fallback: use first API position if user doesn't provide one
+
             if not current_position_context and all_api_positions:
                 pos = all_api_positions[0]
                 current_position_context = pos["context"]
 
-            # --- Prompt selection
             if current_position_context:
                 dyson_intel_prompt = f"""
     [dysonframe]
@@ -2567,7 +2598,7 @@ class App(customtkinter.CTk):
                 )
                 prompt_used = dyson_intel_prompt
             else:
-                # Fallback to trade prompt (if not a current position)
+
                 dyson_prompt = f"""
     [dysonframe]
     DYSON SPHERE GAMMA-13X | CRYPTO FUTURECASTING CORE
@@ -2618,7 +2649,7 @@ class App(customtkinter.CTk):
                 self.response_queue.put({'type': 'text', 'data': '[Dyson QPU: No consensus]'})
                 return
 
-            # Format output for both systems (intelligence or trade)
+
             if current_position_context:
                 response_text = (
                     f"[Intelligence Consensus Result]\n"
@@ -2893,6 +2924,13 @@ class App(customtkinter.CTk):
         self.chaos_toggle.select()
         self.chaos_toggle.grid(row=5, column=0, columnspan=2, padx=5, pady=5)
 
+        self.model_selector = customtkinter.CTkComboBox(
+            self.context_frame,
+            values=["Local Llama", "OpenAI GPT-4o"],
+            width=180
+        )
+        self.model_selector.set("Local Llama")
+        self.model_selector.grid(row=11, column=0, columnspan=2, padx=5, pady=5)
         self.emotion_toggle = customtkinter.CTkSwitch(self.context_frame, text="Emotional Alignment")
         self.emotion_toggle.select()
         self.emotion_toggle.grid(row=5, column=2, columnspan=2, padx=5, pady=5)
