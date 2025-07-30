@@ -3063,14 +3063,6 @@ class App(customtkinter.CTk):
 
         self.settings_frame = customtkinter.CTkFrame(self.sidebar_frame, corner_radius=10)
         self.settings_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
-
-        self.username_label = customtkinter.CTkLabel(self.settings_frame, text="Username:")
-        self.username_label.grid(row=0, column=0, padx=5, pady=5)
-        self.username_entry = customtkinter.CTkEntry(self.settings_frame, width=120, placeholder_text="Enter username")
-        self.username_entry.insert(0, "gray00")
-        self.username_entry.grid(row=0, column=1, padx=5, pady=5)
-        self.update_username_button = customtkinter.CTkButton(self.settings_frame, text="Update", command=self.update_username)
-        self.update_username_button.grid(row=0, column=2, padx=5, pady=5)
         self.username_label = customtkinter.CTkLabel(self.settings_frame, text="Username:")
         self.username_label.grid(row=0, column=0, padx=5, pady=5)
         self.username_entry = customtkinter.CTkEntry(self.settings_frame, width=120, placeholder_text="Enter username")
