@@ -2160,8 +2160,7 @@ class App(customtkinter.CTk):
         consensus["confidence"] = int(median(confs)) if confs else None
 
         return consensus, results
-class App(customtkinter.CTk):
-    ...
+
     def cleanup_stale_crypto_live_positions(self, user_id: str, open_positions: list[dict]) -> None:
         """
         Remove CryptoLivePosition objects that are no longer present in the latest API snapshot.
