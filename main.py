@@ -44,7 +44,12 @@ from scipy.spatial.distance import cosine
 import re
 from statistics import median, mode
 import time
-import tenseal as ts
+try:
+    import tenseal as ts
+    TENSEAL_AVAILABLE = True
+except Exception:
+    ts = None
+    TENSEAL_AVAILABLE = False
 
 ARGON2_TIME_COST_DEFAULT = 3          
 ARGON2_MEMORY_COST_KIB    = 262144   
@@ -313,8 +318,6 @@ class CKKSManager:
         vals = ct.decrypt()
         return float(vals[0])
 
-ckks = CKKSManager()
-HE_ENABLED = HE_ENABLED_DEFAULT and ckks.ready  # gate
 
 class AdvancedHomomorphicVectorMemory:
 
@@ -792,6 +795,9 @@ class SecureKeyManager:
 
 crypto = SecureKeyManager()  
 
+ckks = CKKSManager()
+HE_ENABLED = HE_ENABLED_DEFAULT and ckks.ready 
+
 def _token_hist(text: str) -> Counter:
     return Counter(word_tokenize(text))
 
@@ -1079,16 +1085,6 @@ def setup_weaviate_schema(client):
         })
     except Exception as e:
         logger.error(f"[Schema Init Error] {e}")
-
-def _load_policy_if_needed(self):
-    if not hasattr(self, "pg_params"):
-        try:
-            self._load_policy()
-        except Exception as e:
-            logger.warning(f"[Policy Load Error] {e}")
-            self.pg_params = {}
-    if not hasattr(self, "pg_learning_rate"):
-        self.pg_learning_rate = 0.05
 
 def evaluate_candidate(response: str, target_sentiment: float, original_query: str) -> float:
 
