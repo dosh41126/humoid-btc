@@ -296,76 +296,132 @@ class SecureEnclave:
                 pass
         self._buffers.clear()
 
+
 class AdvancedHomomorphicVectorMemory:
 
     AAD_CONTEXT = _aad_str("fhe", "embeddingv2")
     DIM = 64
-    QUANT_SCALE = 127.0  
+    QUANT_SCALE = 127.0
+    SIMHASH_BITS = 16  # number of LSH planes
 
     def __init__(self):
+        self._rot_by_k: dict[int, np.ndarray] = {}
+        self._planes_by_k: dict[int, np.ndarray] = {}
 
-        master_key = crypto._derived_keys[crypto.active_version]
-        seed = int.from_bytes(hashlib.sha256(master_key).digest()[:8], "big")
+    def _ensure_params_for_k(self, kv: int) -> None:
+
+        if kv in self._rot_by_k and kv in self._planes_by_k:
+            return
+        try:
+ 
+            key = crypto._derived_keys[kv]
+        except KeyError as e:
+
+            logger.warning(f"[FHEv2] No derived key for kv={kv}; falling back to active kv={crypto.active_version}.")
+            kv = crypto.active_version
+            key = crypto._derived_keys[kv]
+
+        seed = int.from_bytes(hashlib.sha256(key).digest()[:8], "big")
         rng = np.random.default_rng(seed)
 
         A = rng.normal(size=(self.DIM, self.DIM))
         Q, _ = np.linalg.qr(A)
-        self.rotation = Q  
+        self._rot_by_k[kv] = Q.astype(np.float32)
+        self._planes_by_k[kv] = rng.normal(size=(self.SIMHASH_BITS, self.DIM)).astype(np.float32)
 
-        self.lsh_planes = rng.normal(size=(16, self.DIM)) 
+    @staticmethod
+    def _fit_dim(vec: np.ndarray, dim: int) -> np.ndarray:
+        v = np.asarray(vec, dtype=np.float32)
+        if v.shape[0] == dim:
+            return v
+        if v.shape[0] < dim:
+            out = np.zeros((dim,), dtype=np.float32)
+            out[: v.shape[0]] = v
+            return out
+        return v[:dim]
 
-    def _rotate(self, vec: np.ndarray) -> np.ndarray:
-        return self.rotation @ vec
+    @staticmethod
+    def _extract_kv_from_crypto_token(token: str) -> int:
+
+        try:
+            meta = json.loads(token)
+            return int(meta.get("k", crypto.active_version))
+        except Exception:
+            return crypto.active_version
+
+    def _rotate(self, vec: np.ndarray, kv: int | None = None) -> np.ndarray:
+
+        kv = crypto.active_version if kv is None else kv
+        self._ensure_params_for_k(kv)
+        return self._rot_by_k[kv] @ self._fit_dim(vec, self.DIM)
 
     def _quantize(self, vec: np.ndarray) -> list[int]:
-        clipped = np.clip(vec, -1.0, 1.0)
+        clipped = np.clip(vec, -1.0, 1.0).astype(np.float32)
         return (clipped * self.QUANT_SCALE).astype(np.int8).tolist()
 
     def _dequantize(self, q: list[int]) -> np.ndarray:
-        arr = np.array(q, dtype=np.float32) / self.QUANT_SCALE
-        return arr
+        return (np.asarray(q, dtype=np.float32) / self.QUANT_SCALE).astype(np.float32)
 
-    def _simhash_bucket(self, rotated_vec: np.ndarray) -> str:
-        dots = self.lsh_planes @ rotated_vec
-        bits = ["1" if d >= 0 else "0" for d in dots]
-        return "".join(bits) 
+    def _simhash_bucket(self, rotated_vec: np.ndarray, kv: int | None = None) -> str:
 
+        kv = crypto.active_version if kv is None else kv
+        self._ensure_params_for_k(kv)
+        dots = (self._planes_by_k[kv] @ rotated_vec.astype(np.float32))
+        bits = ["1" if d >= 0 else "0" for d in np.asarray(dots).ravel()]
+        return "".join(bits)
+
+    def bucket_for_query(self, vec: np.ndarray, kv: int | None = None) -> str:
+
+        kv = crypto.active_version if kv is None else kv
+        rot = self._rotate(vec, kv=kv)
+        return self._simhash_bucket(rot, kv=kv)
+s
     def encrypt_embedding(self, vec: list[float]) -> tuple[str, str]:
+
         try:
-            arr = np.array(vec, dtype=np.float32)
-            if arr.shape[0] != self.DIM:
+            kv = crypto.active_version
+            self._ensure_params_for_k(kv)
 
-                if arr.shape[0] < self.DIM:
-                    arr = np.concatenate([arr, np.zeros(self.DIM - arr.shape[0])])
-                else:
-                    arr = arr[:self.DIM]
-
-            rotated = self._rotate(arr)
-            bucket = self._simhash_bucket(rotated)
+            arr = self._fit_dim(np.asarray(vec, dtype=np.float32), self.DIM)
+            rotated = self._rotate(arr, kv=kv)
+            bucket = self._simhash_bucket(rotated, kv=kv)  
             quant = self._quantize(rotated)
 
             payload = json.dumps({
                 "v": 2,
                 "dim": self.DIM,
                 "rot": True,
+                "kv": kv,           
+                "bits": self.SIMHASH_BITS,
+                "qscale": self.QUANT_SCALE,
                 "data": quant,
             })
-            token = crypto.encrypt(payload, aad=self.AAD_CONTEXT)
+  
+            token = crypto.encrypt(payload, aad=self.AAD_CONTEXT, key_version=kv)
             return token, bucket
         except Exception as e:
             logger.error(f"[FHEv2] encrypt_embedding failed: {e}")
-            return "", "0"*16
+            return "", "0" * self.SIMHASH_BITS
 
     def decrypt_embedding(self, token: str) -> np.ndarray:
+
         try:
-            raw = crypto.decrypt(token)
+            kv = self._extract_kv_from_crypto_token(token)
+            self._ensure_params_for_k(kv)
+
+            raw = crypto.decrypt(token) 
             obj = json.loads(raw)
-            if obj.get("v") != 2:
+            if int(obj.get("v", 0)) != 2:
                 logger.warning("[FHEv2] Unsupported embedding version.")
                 return np.zeros(self.DIM, dtype=np.float32)
+
             quant = obj.get("data", [])
+            if not isinstance(quant, list):
+                return np.zeros(self.DIM, dtype=np.float32)
+
             rotated = self._dequantize(quant)
-            original = self.rotation.T @ rotated
+
+            original = (self._rot_by_k[kv].T @ self._fit_dim(rotated, self.DIM)).astype(np.float32)
             return original
         except Exception as e:
             logger.warning(f"[FHEv2] decrypt_embedding failed: {e}")
@@ -373,14 +429,16 @@ class AdvancedHomomorphicVectorMemory:
 
     @staticmethod
     def cosine(a: np.ndarray, b: np.ndarray) -> float:
-        denom = (np.linalg.norm(a) * np.linalg.norm(b))
-        if denom == 0:
+        a = np.asarray(a, dtype=np.float32)
+        b = np.asarray(b, dtype=np.float32)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+        if denom == 0.0:
             return 0.0
         return float(np.dot(a, b) / denom)
 
     def enclave_similarity(self, enc_a: str, query_vec: np.ndarray, enclave: SecureEnclave) -> float:
         dec = enclave.track(self.decrypt_embedding(enc_a))
-        return self.cosine(dec, query_vec)
+        return self.cosine(dec, self._fit_dim(query_vec, self.DIM))
 
 class SecureKeyManager:
 
@@ -2197,7 +2255,6 @@ class App(customtkinter.CTk):
                         pass
         except Exception as e:
             logger.warning(f"[Weaviate Live Position Cleanup Error] {e}")
-
 
     def fetch_crypto_gecko(symbol: str = "bitcoin", vs_currency: str = "usd") -> List[Tuple[int, float]]:
 
