@@ -302,7 +302,7 @@ class AdvancedHomomorphicVectorMemory:
     AAD_CONTEXT = _aad_str("fhe", "embeddingv2")
     DIM = 64
     QUANT_SCALE = 127.0
-    SIMHASH_BITS = 16  # number of LSH planes
+    SIMHASH_BITS = 16 
 
     def __init__(self):
         self._rot_by_k: dict[int, np.ndarray] = {}
@@ -375,7 +375,7 @@ class AdvancedHomomorphicVectorMemory:
         kv = crypto.active_version if kv is None else kv
         rot = self._rotate(vec, kv=kv)
         return self._simhash_bucket(rot, kv=kv)
-s
+
     def encrypt_embedding(self, vec: list[float]) -> tuple[str, str]:
 
         try:
