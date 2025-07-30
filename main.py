@@ -1,114 +1,4 @@
-# =============================================================================
-# Dyson Sphere Quantum Oracle – Unified Agent System (Single File Release)
-# =============================================================================
-#
-# TABLE OF CONTENTS
-#
-# 0.  Meta & System Overview
-#     0.1 Project Summary
-#     0.2 Key Features
-#     0.3 Quickstart / Runtime Notes
-#
-# 1.  Imports, Environment, and Global Constants
-#     1.1 Standard Library Imports
-#     1.2 Third-Party & ML Libraries
-#     1.3 System/Hardware Config (Paths, Devices, Env Vars)
-#     1.4 Global Settings & Thresholds
-#
-# 2.  Cryptography & Secure Enclave
-#     2.1 AES-GCM/Argon2 Config
-#     2.2 Vault Format & Key Rotation
-#     2.3 Secure KeyManager Class
-#     2.4 Encrypted Environment Variables
-#     2.5 Self-Mutating Keys & Entropy Measurement
-#
-# 3.  Text Preprocessing & Input Sanitation
-#     3.1 NLTK Resource Download/Validation
-#     3.2 Text Sanitization (bleach, regex, prompt injection)
-#     3.3 Tokenization, POS Tagging, and Embedding Utilities
-#     3.4 Secure Prompt Construction
-#
-# 4.  Advanced Vector Memory & Homomorphic Embeddings
-#     4.1 Vector Encryption Pipeline
-#     4.2 SimHash Bucketing & Locality-Sensitive Hashing
-#     4.3 Rotation & Quantization Operations
-#     4.4 SecureEnclave Context Manager
-#     4.5 FHEv2 Embedding Encryption/Decryption
-#
-# 5.  Topological Memory Manifold & Crystallization
-#     5.1 Laplacian Graph Embedding
-#     5.2 Crystallized Phrase Logic (Scoring, Aging)
-#     5.3 Geodesic Memory Retrieval
-#     5.4 Manifold Maintenance & Rebuilding
-#
-# 6.  Persistence Layers
-#     6.1 SQLite Local Storage (Tables, Migration)
-#     6.2 Weaviate Client & Schema Bootstrapping
-#     6.3 Hybrid Record Upsert/Delete/Query
-#     6.4 Record AAD Contexts (for encryption)
-#
-# 7.  LLM Integration & Prompt Engineering
-#     7.1 Llama.cpp Model Setup & Execution
-#     7.2 Prompt Chunking, Memory Drift, and Attention Windows
-#     7.3 Role/Token Detection and Output Type Inference
-#     7.4 Output Postprocessing (Coherence, Entropy Filters)
-#     7.5 Multi-Agent Consensus Pipeline (Ensembling)
-#
-# 8.  Quantum State Integration (PennyLane, RGB Gates)
-#     8.1 QNode Device Setup
-#     8.2 Quantum-Driven Memory & Reasoning
-#     8.3 RGB Extraction from Language/Sentiment
-#     8.4 Quantum Gate Definition & Measurement
-#     8.5 Z-State Management Across UI Cycles
-#
-# 9.  External Data APIs & Context Sources
-#     9.1 Coinbase API (Spot & Derivatives)
-#     9.2 CoinGecko Price History Integration
-#     9.3 Open-Meteo Weather Fetch
-#     9.4 Live System Telemetry (CPU, etc.)
-#
-# 10. GUI & User Interface Logic
-#     10.1 CustomTkinter Style & Appearance
-#     10.2 Sidebar/Settings Frame Construction
-#     10.3 Main Conversation Pane (Text/Scrollbox)
-#     10.4 Input Handling, Event Binding, Async Queue
-#     10.5 Dynamic Fields (Lat/Lon, Weather, Event Type, etc.)
-#     10.6 Live Status Displays (Quantum State, Errors)
-#
-# 11. Agentic Reasoning, Policy, and RL Head
-#     11.1 Policy File Management (Load, Reload, Save)
-#     11.2 REINFORCE/PG Parameter Update
-#     11.3 Bias, Entropy, and Dynamic Sampling
-#     11.4 Policy Sampling per User Turn
-#
-# 12. Memory Management & Long-Term Aging
-#     12.1 Score Decay and Half-Life Logic
-#     12.2 Memory Purging & Crystallization Events
-#     12.3 Manifold Rebuilding on Memory Shifts
-#     12.4 Ongoing Aging Scheduler
-#
-# 13. API, Data, and UI Utilities
-#     13.1 Keyword/Noun Extraction
-#     13.2 Summarization & Sentiment Pipelines
-#     13.3 UUID Generation & Validation Helpers
-#     13.4 General Error/Exception Handlers
-#
-# 14. Logging, Debugging, and Diagnostics
-#     14.1 Logger Setup & Usage Patterns
-#     14.2 Error Reporting & Silent Fail Policy
-#     14.3 Runtime Self-Check (Init Status)
-#
-# 15. Main App Loop & Entry Point
-#     15.1 `if __name__ == "__main__"` Boot Logic
-#     15.2 Init Sequence (UserID, DB, GUI)
-#     15.3 Shutdown Hooks and Cleanup
-#
-# 16. Future Extensions (Optional Sections)
-#     16.1 Lottery/Sports/Custom Prediction Hooks
-#     16.2 Multi-User/Role Segregation
-#     16.3 Plugin Architecture Suggestions
-#
-# =============================================================================
+
 import tkinter as tk
 import customtkinter
 import threading
@@ -149,11 +39,12 @@ import bleach
 import httpx
 import math
 from typing import List, Tuple
-from math import log2
+from math import log2, isclose
 from scipy.spatial.distance import cosine
 import re
 from statistics import median, mode
 import time
+import tenseal as ts
 
 ARGON2_TIME_COST_DEFAULT = 3          
 ARGON2_MEMORY_COST_KIB    = 262144   
@@ -296,6 +187,137 @@ class SecureEnclave:
                 pass
         self._buffers.clear()
 
+
+HE_ENABLED_DEFAULT = True
+
+class CKKSManager:
+
+    DIM = 64
+    POLY_DEG = 8192
+    SCALE   = 2**40
+    MODBITS = [60, 40, 40, 60]
+
+    def __init__(self):
+        self._sec_ctx_b64 = None
+        self._pub_ctx_b64 = None
+        self._sec_ctx = None
+        self._pub_ctx = None
+        self.ready = False
+        self._init_contexts()
+
+    def _init_contexts(self):
+        if not TENSEAL_AVAILABLE:
+            self.ready = False
+            return
+        try:
+            ctx = ts.context(
+                ts.SCHEME_TYPE.CKKS,
+                poly_modulus_degree=self.POLY_DEG,
+                coeff_mod_bit_sizes=self.MODBITS
+            )
+            ctx.generate_galois_keys()
+            ctx.generate_relin_keys()
+            ctx.global_scale = self.SCALE
+            self._sec_ctx = ctx
+            self._sec_ctx_b64 = base64.b64encode(ctx.serialize(save_secret_key=True)).decode()
+
+            pub = ts.context_from(ctx.serialize(save_secret_key=False))
+            self._pub_ctx = pub
+            self._pub_ctx_b64 = base64.b64encode(pub.serialize(save_secret_key=False)).decode()
+
+            try:
+                os.environ["CKKS_PUBLIC_CTX_B64"] = self._pub_ctx_b64
+                os.environ["CKKS_SECRET_CTX_B64"] = crypto.encrypt(self._sec_ctx_b64)
+            except Exception:
+                pass
+
+            self.ready = True
+        except Exception as e:
+            logger.error(f"[CKKS] Context init failed: {e}")
+            self.ready = False
+
+    def _ensure_loaded(self):
+        if self.ready and self._sec_ctx and self._pub_ctx:
+            return
+        if not TENSEAL_AVAILABLE:
+            self.ready = False
+            return
+        try:
+
+            pub = os.environ.get("CKKS_PUBLIC_CTX_B64", "")
+            sec_enc = os.environ.get("CKKS_SECRET_CTX_B64", "")
+            if pub and sec_enc:
+                self._pub_ctx_b64 = pub
+                self._sec_ctx_b64 = crypto.decrypt(sec_enc)
+                self._pub_ctx = ts.context_from(base64.b64decode(self._pub_ctx_b64.encode()))
+                self._sec_ctx = ts.context_from(base64.b64decode(self._sec_ctx_b64.encode()))
+                self.ready = True
+        except Exception as e:
+            logger.error(f"[CKKS] Load from env failed: {e}")
+            self.ready = False
+
+    @staticmethod
+    def _fit_dim(vec: np.ndarray, dim: int) -> np.ndarray:
+        v = np.asarray(vec, dtype=np.float64)
+        if v.shape[0] == dim:
+            return v
+        if v.shape[0] < dim:
+            out = np.zeros((dim,), dtype=np.float64)
+            out[:v.shape[0]] = v
+            return out
+        return v[:dim]
+
+    def _pack_one_vector_slots(self, x: np.ndarray) -> np.ndarray:
+
+        total_slots = 4096
+        buf = np.zeros(total_slots, dtype=np.float64)
+        buf[:self.DIM] = self._fit_dim(x, self.DIM)
+        return buf
+
+    def _pack_query_replicated(self, q: np.ndarray) -> np.ndarray:
+
+        return self._pack_one_vector_slots(q)
+
+
+    def encrypt_candidate_group_b64(self, x_vec: np.ndarray) -> str:
+
+        self._ensure_loaded()
+        if not self.ready:
+            raise RuntimeError("CKKS not ready")
+        buf = self._pack_one_vector_slots(x_vec)
+        ct = ts.ckks_vector(self._pub_ctx, buf.tolist())
+        return base64.b64encode(ct.serialize()).decode()
+
+    def encrypt_query_b64(self, q_vec: np.ndarray) -> str:
+
+        return self.encrypt_candidate_group_b64(q_vec)
+
+
+    def _sum_fold_block64(self, ct: "ts.CKKSVector") -> "ts.CKKSVector":
+        for shift in (1,2,4,8,16,32):
+            ct += ct.rotate(shift)
+        return ct
+
+    def score_one_group_b64(self, enc_group_b64: str, enc_query_b64: str) -> str:
+        self._ensure_loaded()
+        if not self.ready:
+            raise RuntimeError("CKKS not ready")
+        X = ts.ckks_vector_from(self._pub_ctx, base64.b64decode(enc_group_b64.encode()))
+        Q = ts.ckks_vector_from(self._pub_ctx, base64.b64decode(enc_query_b64.encode()))
+        P = X * Q
+        P = self._sum_fold_block64(P) 
+        return base64.b64encode(P.serialize()).decode()
+
+    def decrypt_score_b64(self, enc_scores_b64: str) -> float:
+        self._ensure_loaded()
+        if not self.ready:
+            raise RuntimeError("CKKS not ready")
+        ct = ts.ckks_vector_from(self._sec_ctx, base64.b64decode(enc_scores_b64.encode()))
+        vals = ct.decrypt()
+        return float(vals[0])
+
+ckks = CKKSManager()
+HE_ENABLED = HE_ENABLED_DEFAULT and ckks.ready  # gate
 
 class AdvancedHomomorphicVectorMemory:
 
@@ -891,7 +913,6 @@ class TopologicalMemoryManifold:
 topo_manifold = TopologicalMemoryManifold()
 fhe_v2 = AdvancedHomomorphicVectorMemory()
 
-
 def fetch_coinbase_spot_positions() -> list[dict]:
     API_KEY    = get_encrypted_env_var("COINBASE_API_KEY")
     API_SECRET = get_encrypted_env_var("COINBASE_API_SECRET")
@@ -954,9 +975,7 @@ def fetch_coinbase_derivative_positions() -> list[dict]:
         logger.warning(f"[Coinbase Derivatives API] {e}")
         return []
 
-
 def setup_weaviate_schema(client):
-    """Ensure all required classes exist in Weaviate."""
     try:
         def ensure_class(defn: dict):
             existing = client.schema.get().get("classes", [])
@@ -964,108 +983,105 @@ def setup_weaviate_schema(client):
             if defn["class"] not in names:
                 client.schema.create_class(defn)
 
-    
         ensure_class({
             "class": "InteractionHistory",
             "description": "User/AI messages, optionally with encrypted embeddings and buckets",
             "properties": [
-                {"name": "user_id",            "dataType": ["string"]},
-                {"name": "user_message",       "dataType": ["text"]},
-                {"name": "ai_response",        "dataType": ["text"]},
-                {"name": "response_time",      "dataType": ["string"]},
-                {"name": "encrypted_embedding","dataType": ["text"]},
-                {"name": "embedding_bucket",   "dataType": ["string"]},
-                {"name": "keywords",           "dataType": ["string"]},  
-                {"name": "sentiment",          "dataType": ["number"]},
+                {"name": "user_id",             "dataType": ["string"]},
+                {"name": "user_message",        "dataType": ["text"]},
+                {"name": "ai_response",         "dataType": ["text"]},
+                {"name": "response_time",       "dataType": ["string"]},
+                {"name": "encrypted_embedding", "dataType": ["text"]},    
+                {"name": "embedding_bucket",    "dataType": ["string"]},
+                {"name": "he_pack_id",          "dataType": ["string"]},
+                {"name": "he_pack_slot",        "dataType": ["int"]},    
+                {"name": "he_enc_group_b64",    "dataType": ["text"]}, 
+                {"name": "he_ctx_version",      "dataType": ["int"]},   
+                {"name": "keywords",            "dataType": ["string"]},
+                {"name": "sentiment",           "dataType": ["number"]},
             ]
         })
-
 
         ensure_class({
             "class": "LongTermMemory",
             "description": "Crystallized phrases with scores and timestamps",
             "properties": [
-                {"name": "phrase",             "dataType": ["string"]},
-                {"name": "score",              "dataType": ["number"]},
-                {"name": "crystallized_time",  "dataType": ["string"]},
+                {"name": "phrase",            "dataType": ["string"]},
+                {"name": "score",             "dataType": ["number"]},
+                {"name": "crystallized_time", "dataType": ["string"]},
             ]
         })
 
-      
         ensure_class({
             "class": "CryptoPosition",
             "description": "Saved user+bot positions (snapshot/upsert)",
             "properties": [
-                {"name": "user_id",            "dataType": ["string"]},
-                {"name": "bot_id",             "dataType": ["string"]},
-                {"name": "symbol",             "dataType": ["string"]},
-                {"name": "size",               "dataType": ["number"]},
-                {"name": "position_context",   "dataType": ["text"]},
-                {"name": "timestamp",          "dataType": ["string"]},
+                {"name": "user_id",          "dataType": ["string"]},
+                {"name": "bot_id",           "dataType": ["string"]},
+                {"name": "symbol",           "dataType": ["string"]},
+                {"name": "size",             "dataType": ["number"]},
+                {"name": "position_context", "dataType": ["text"]},
+                {"name": "timestamp",        "dataType": ["string"]},
             ]
         })
 
-       
         ensure_class({
             "class": "CryptoLivePosition",
             "description": "Live positions (spot/derivatives) synced from APIs",
             "properties": [
-                {"name": "user_id",            "dataType": ["string"]},
-                {"name": "symbol",             "dataType": ["string"]},
-                {"name": "size",               "dataType": ["number"]},
-                {"name": "context",            "dataType": ["text"]},
-                {"name": "timestamp",          "dataType": ["string"]},
-                {"name": "type",               "dataType": ["string"]},
+                {"name": "user_id",   "dataType": ["string"]},
+                {"name": "symbol",    "dataType": ["string"]},
+                {"name": "size",      "dataType": ["number"]},
+                {"name": "context",   "dataType": ["text"]},
+                {"name": "timestamp", "dataType": ["string"]},
+                {"name": "type",      "dataType": ["string"]},
             ]
         })
 
-     
         ensure_class({
             "class": "CryptoTradeLog",
             "description": "Predictions and reasoning logs",
             "properties": [
-                {"name": "type",               "dataType": ["string"]},
-                {"name": "user_id",            "dataType": ["string"]},
-                {"name": "bot_id",             "dataType": ["string"]},
-                {"name": "query",              "dataType": ["text"]},
-                {"name": "response",           "dataType": ["text"]},
-                {"name": "reasoning_trace",    "dataType": ["text"]},
-                {"name": "prompt_snapshot",    "dataType": ["text"]},
-                {"name": "z_state",            "dataType": ["blob"]},
-                {"name": "entropy",            "dataType": ["number"]},
-                {"name": "bias_factor",        "dataType": ["number"]},
-                {"name": "temperature",        "dataType": ["number"]},
-                {"name": "top_p",              "dataType": ["number"]},
-                {"name": "sentiment_target",   "dataType": ["number"]},
-                {"name": "timestamp",          "dataType": ["string"]},
-                {"name": "asset",              "dataType": ["string"]},
+                {"name": "type",             "dataType": ["string"]},
+                {"name": "user_id",          "dataType": ["string"]},
+                {"name": "bot_id",           "dataType": ["string"]},
+                {"name": "query",            "dataType": ["text"]},
+                {"name": "response",         "dataType": ["text"]},
+                {"name": "reasoning_trace",  "dataType": ["text"]},
+                {"name": "prompt_snapshot",  "dataType": ["text"]},
+                {"name": "z_state",          "dataType": ["blob"]},
+                {"name": "entropy",          "dataType": ["number"]},
+                {"name": "bias_factor",      "dataType": ["number"]},
+                {"name": "temperature",      "dataType": ["number"]},
+                {"name": "top_p",            "dataType": ["number"]},
+                {"name": "sentiment_target", "dataType": ["number"]},
+                {"name": "timestamp",        "dataType": ["string"]},
+                {"name": "asset",            "dataType": ["string"]},
             ]
         })
-
 
         ensure_class({
             "class": "ReflectionLog",
             "description": "Dyson assistant's internal reflection and reasoning traces",
             "properties": [
-                {"name": "type",               "dataType": ["string"]},
-                {"name": "user_id",            "dataType": ["string"]},
-                {"name": "bot_id",             "dataType": ["string"]},
-                {"name": "query",              "dataType": ["text"]},
-                {"name": "response",           "dataType": ["text"]},
-                {"name": "reasoning_trace",    "dataType": ["text"]},
-                {"name": "prompt_snapshot",    "dataType": ["text"]},
-                {"name": "z_state",            "dataType": ["blob"]},
-                {"name": "entropy",            "dataType": ["number"]},
-                {"name": "bias_factor",        "dataType": ["number"]},
-                {"name": "temperature",        "dataType": ["number"]},
-                {"name": "top_p",              "dataType": ["number"]},
-                {"name": "sentiment_target",   "dataType": ["number"]},
-                {"name": "timestamp",          "dataType": ["date"]},
+                {"name": "type",            "dataType": ["string"]},
+                {"name": "user_id",         "dataType": ["string"]},
+                {"name": "bot_id",          "dataType": ["string"]},
+                {"name": "query",           "dataType": ["text"]},
+                {"name": "response",        "dataType": ["text"]},
+                {"name": "reasoning_trace", "dataType": ["text"]},
+                {"name": "prompt_snapshot", "dataType": ["text"]},
+                {"name": "z_state",         "dataType": ["blob"]},
+                {"name": "entropy",         "dataType": ["number"]},
+                {"name": "bias_factor",     "dataType": ["number"]},
+                {"name": "temperature",     "dataType": ["number"]},
+                {"name": "top_p",           "dataType": ["number"]},
+                {"name": "sentiment_target","dataType": ["number"]},
+                {"name": "timestamp",       "dataType": ["date"]},
             ]
         })
     except Exception as e:
         logger.error(f"[Schema Init Error] {e}")
-
 
 def _load_policy_if_needed(self):
     if not hasattr(self, "pg_params"):
@@ -1316,7 +1332,6 @@ def init_db():
     except Exception as e:
         logger.warning(f"[Aging] Could not add aging_last column (continuing with last_updated): {e}")
 
-
 def set_encrypted_env_var(varname: str, value: str):
     if value:
         enc = crypto.encrypt(value)
@@ -1356,14 +1371,39 @@ def save_user_message(user_id, user_input):
 
         plain_embedding = compute_text_embedding(user_input)
         enc_embedding, bucket = fhe_v2.encrypt_embedding(plain_embedding)
+
+        he_pack_id = str(uuid.uuid4())
+        he_pack_slot = 0
+        he_ctx_version = 1
+
+        try:
+            he_enc_group_b64 = ""
+            if HE_ENABLED:
+                x = np.array(plain_embedding, dtype=np.float64)
+
+                n = np.linalg.norm(x) + 1e-12
+                x = x / n
+                he_enc_group_b64 = ckks.encrypt_candidate_group_b64(x)
+            else:
+                logger.info("[HE] Disabled or unavailable; skipping he_enc_group_b64.")
+        except Exception as e:
+            logger.warning(f"[HE] encrypt candidate failed: {e}")
+            he_enc_group_b64 = ""
+
         dummy_vector = [0.0] * fhe_v2.DIM
 
         obj = {
             "user_id": user_id,
             "user_message": encrypted_input_weav,
             "response_time": response_time,
+
             "encrypted_embedding": enc_embedding,
-            "embedding_bucket": bucket
+            "embedding_bucket": bucket,
+
+            "he_pack_id": he_pack_id,
+            "he_pack_slot": he_pack_slot,
+            "he_enc_group_b64": he_enc_group_b64,
+            "he_ctx_version": he_ctx_version,
         }
         generated_uuid = generate_uuid5(user_id, user_input)
         response = requests.post(
@@ -1405,6 +1445,23 @@ def save_bot_response(bot_id: str, bot_response: str):
 
         plain_embedding = compute_text_embedding(bot_response)
         enc_embedding, bucket = fhe_v2.encrypt_embedding(plain_embedding)
+
+        he_pack_id = str(uuid.uuid4())
+        he_pack_slot = 0
+        he_ctx_version = 1
+        try:
+            he_enc_group_b64 = ""
+            if HE_ENABLED:
+                x = np.array(plain_embedding, dtype=np.float64)
+                n = np.linalg.norm(x) + 1e-12
+                x = x / n
+                he_enc_group_b64 = ckks.encrypt_candidate_group_b64(x)
+            else:
+                logger.info("[HE] Disabled or unavailable; skipping he_enc_group_b64.")
+        except Exception as e:
+            logger.warning(f"[HE] encrypt candidate failed: {e}")
+            he_enc_group_b64 = ""
+
         dummy_vector = [0.0] * fhe_v2.DIM
 
         props = {
@@ -1412,7 +1469,11 @@ def save_bot_response(bot_id: str, bot_response: str):
             "ai_response": enc_weav,
             "response_time": response_time,
             "encrypted_embedding": enc_embedding,
-            "embedding_bucket": bucket
+            "embedding_bucket": bucket,
+            "he_pack_id": he_pack_id,
+            "he_pack_slot": he_pack_slot,
+            "he_enc_group_b64": he_enc_group_b64,
+            "he_ctx_version": he_ctx_version,
         }
         generated_uuid = generate_uuid5(bot_id, bot_response)
         resp = requests.post(
@@ -1429,6 +1490,7 @@ def save_bot_response(bot_id: str, bot_response: str):
             logger.error(f"Weaviate POST failed: {resp.status_code} {resp.text}")
     except Exception as e:
         logger.exception(f"Exception in save_bot_response: {e}")
+
 
 def query_reflections(self, user_id: str, substring: str = None, limit: int = 5):
     try:
@@ -1515,11 +1577,12 @@ def truncate_text(text, max_words=100):
    return ' '.join(text.split()[:max_words])
 
 def fetch_relevant_info(chunk, client, user_input):
+
     try:
         if not user_input:
             return ""
-
-        query_vec = np.array(compute_text_embedding(user_input), dtype=np.float32)
+        
+        query_vec = np.array(compute_text_embedding(user_input), dtype=np.float64)
         rotated = fhe_v2._rotate(query_vec)
         bucket = fhe_v2._simhash_bucket(rotated)
 
@@ -1532,12 +1595,17 @@ def fetch_relevant_info(chunk, client, user_input):
                         operator: Equal,
                         valueString: "{bucket}"
                     }}
-                    limit: 40
+                    limit: 64
                     sort: {{path:"response_time", order: desc}}
                 ) {{
                     user_message
                     ai_response
                     encrypted_embedding
+
+                    he_pack_id
+                    he_pack_slot
+                    he_enc_group_b64
+                    he_ctx_version
                 }}
             }}
         }}
@@ -1548,6 +1616,34 @@ def fetch_relevant_info(chunk, client, user_input):
                     .get('Get', {})
                     .get('InteractionHistory', [])
         )
+    
+        if HE_ENABLED and results:
+            try:
+                q = query_vec.copy()
+                n = np.linalg.norm(q) + 1e-12
+                q = q / n
+                enc_q_b64 = ckks.encrypt_query_b64(q)
+                best = None
+                best_score = -1e9
+                best_raw = None
+                for obj in results:
+                    enc_group_b64 = obj.get("he_enc_group_b64") or ""
+                    if not enc_group_b64:
+                        continue
+                    enc_scores_b64 = ckks.score_one_group_b64(enc_group_b64, enc_q_b64)
+                    score = ckks.decrypt_score_b64(enc_scores_b64)
+                    if score > best_score:
+                        best_score = score
+                        best = obj
+
+                if best is not None:
+                    user_msg_raw = try_decrypt(best.get("user_message", ""))
+                    ai_resp_raw  = try_decrypt(best.get("ai_response", ""))
+                    return f"{user_msg_raw} {ai_resp_raw}"
+             
+            except Exception as e:
+                logger.warning(f"[HE] Scoring failed; falling back. {e}")
+    
         best = None
         best_score = -1.0
         with SecureEnclave() as enclave:
@@ -1559,15 +1655,13 @@ def fetch_relevant_info(chunk, client, user_input):
                 if score > best_score:
                     best_score = score
                     best = obj
-
         if not best or best_score <= 0:
             return ""
-
         user_msg_raw = try_decrypt(best.get("user_message", ""))
         ai_resp_raw  = try_decrypt(best.get("ai_response", ""))
         return f"{user_msg_raw} {ai_resp_raw}"
     except Exception as e:
-        logger.error(f"[FHEv2 retrieval] failed: {e}")
+        logger.error(f"[FHE (CKKS) retrieval] failed: {e}")
         return ""
 
 def llama_generate(prompt, weaviate_client=None, user_input=None, temperature=1.0, top_p=0.9):
@@ -1633,7 +1727,6 @@ def llama_generate(prompt, weaviate_client=None, user_input=None, temperature=1.
                     if js_sim > COHERENCE_SLOPE_LIMIT:
                         logger.warning(f"[Gamma‑13X Exit] JS coherence slope exceeded on chunk {i}")
                         break
-
 
                 if segment_entropy > COHERENCE_ENTROPY_MAX:
                     logger.warning(f"[Gamma‑13X Abort] Entropy threshold exceeded on chunk {i} ({segment_entropy:.4f})")
@@ -1740,7 +1833,6 @@ class App(customtkinter.CTk):
         set_encrypted_env_var("COINBASE_API_SECRET", secret)
         logger.info("[Settings] Coinbase API keys updated (encrypted in env)")
 
-
     def memory_aging_scheduler(self):
 
         self.run_long_term_memory_aging()
@@ -1786,10 +1878,7 @@ class App(customtkinter.CTk):
             logger.error(f"OpenAI API error: {e}")
             return f"[OpenAI Error] {e}"
 
-
     def _load_policy_if_needed(self):
-
-        import os, json
 
         defaults = {
             "temp_w": 0.0,
@@ -1920,7 +2009,6 @@ class App(customtkinter.CTk):
         }
 
     def upsert_position_to_weaviate(self, position: dict, user_id: str, bot_id: str, timestamp: str):
-        """Save or update a position in Weaviate (upsert by user, bot, symbol)."""
         pos_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{bot_id}-{position['symbol']}"))
         try:
             obj = {
@@ -1941,7 +2029,6 @@ class App(customtkinter.CTk):
             logger.warning(f"[Weaviate Position Upsert Error] {e}")
 
     def remove_closed_positions_from_weaviate(self, open_positions: list, user_id: str, bot_id: str):
-        """Delete resolved positions from Weaviate by symbol."""
         try:
             open_syms = {p['symbol'] for p in open_positions}
             q = self.client.query.get(
@@ -1962,7 +2049,6 @@ class App(customtkinter.CTk):
                     logger.info(f"[Weaviate] Removed closed position {sym}")
         except Exception as e:
             logger.warning(f"[Weaviate Position Remove Error] {e}")
-
 
     def _policy_update(self, samples, learning_rate=0.05):
 
@@ -2148,7 +2234,6 @@ class App(customtkinter.CTk):
 
     @staticmethod
     def fetch_coinbase_price(symbol: str = "BTC-USD") -> float | None:
-        """Fetch spot price from Coinbase (simple, short-timeout)."""
         try:
             url = f"https://api.coinbase.com/v2/prices/{symbol}/spot"
             response = httpx.get(url, timeout=4.0)
@@ -2161,7 +2246,6 @@ class App(customtkinter.CTk):
 
     @staticmethod
     def parse_trade_response(text: str) -> dict:
-        """Parse model output into a normalized trade structure."""
         try:
             direction_match = re.search(r"(LONG|SHORT)", text, re.IGNORECASE)
             entry_match     = re.search(r"Entry(?: price)?:?\s*\$?([\d,.]+)", text, re.IGNORECASE)
@@ -2201,7 +2285,6 @@ class App(customtkinter.CTk):
         if not filtered:
             return {}, results
 
-
         try:
             consensus["direction"] = mode([r["direction"] for r in filtered if r.get("direction")])
         except Exception:
@@ -2218,10 +2301,7 @@ class App(customtkinter.CTk):
         return consensus, results
 
     def cleanup_stale_crypto_live_positions(self, user_id: str, open_positions: list[dict]) -> None:
-        """
-        Remove CryptoLivePosition objects that are no longer present in the latest API snapshot.
-        open_positions: list of dicts with at least {'symbol', 'size'}
-        """
+
         try:
             open_syms_sizes = {(str(p['symbol']), float(p['size'])) for p in open_positions}
 
@@ -2240,7 +2320,7 @@ class App(customtkinter.CTk):
                 size = float(obj.get("size", 0) or 0)
                 wid  = obj.get("_additional", {}).get("id")
 
-                # compare with tolerance for floats
+
                 matches_any = any(
                     (sym == osym) and (math.isclose(size, osize, rel_tol=1e-9, abs_tol=1e-9))
                     for (osym, osize) in open_syms_sizes
@@ -2708,7 +2788,6 @@ class App(customtkinter.CTk):
                     "valueString": user_id
                 }).do()
 
-                from math import isclose
                 existing = q.get('data', {}).get('Get', {}).get('CryptoLivePosition', [])
                 api_set = {(str(p['symbol']), float(p['size'])) for p in all_api_positions}
 
