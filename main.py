@@ -161,7 +161,7 @@ from scipy.spatial.distance import cosine
 from collections import Counter
 import re
 from statistics import median, mode
-
+import time
 
 ARGON2_TIME_COST_DEFAULT = 3          
 ARGON2_MEMORY_COST_KIB    = 262144   
@@ -223,6 +223,10 @@ path_to_config = path.join(bundle_dir, 'config.json')
 model_path = "/data/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
 mmproj_path = "/data/llama-3-vision-alpha-mmproj-f16.gguf"
 logo_path = path.join(bundle_dir, 'logo.png')
+DB_NAME = config['DB_NAME']
+API_KEY = config['API_KEY']
+WEAVIATE_ENDPOINT = config['WEAVIATE_ENDPOINT']
+WEAVIATE_QUERY_PATH = config['WEAVIATE_QUERY_PATH']
 
 def load_config(file_path=path_to_config):
     with open(file_path, 'r') as file:
@@ -280,10 +284,6 @@ def sanitize_for_graphql_string(s: str, *, max_len: int = 512) -> str:
     s = s.replace('\\', '\\\\').replace('"', '\\"')
     return s
 
-DB_NAME = config['DB_NAME']
-API_KEY = config['API_KEY']
-WEAVIATE_ENDPOINT = config['WEAVIATE_ENDPOINT']
-WEAVIATE_QUERY_PATH = config['WEAVIATE_QUERY_PATH']
 
 class SecureEnclave:
 
