@@ -71,7 +71,7 @@ Heartflow is not utopia. It is not a panacea. It is a disciplined answer to a se
 We invite you to look at it not as a product, but as a **platform for shared stewardship**. If we build it right—if we keep it explainable, inspectable, and private-by-default—it can become part of how the American economy stays **open**, **resilient**, and **fair** in the face of the enormous transitions ahead.
 
 With respect,
-**Graylan**
+**Graylan** and Gippy(QAI)
 Technologist & Builder of Heartflow
 Working for a more trustworthy economy
 
