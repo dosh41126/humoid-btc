@@ -223,10 +223,6 @@ path_to_config = path.join(bundle_dir, 'config.json')
 model_path = "/data/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
 mmproj_path = "/data/llama-3-vision-alpha-mmproj-f16.gguf"
 logo_path = path.join(bundle_dir, 'logo.png')
-DB_NAME = config['DB_NAME']
-API_KEY = config['API_KEY']
-WEAVIATE_ENDPOINT = config['WEAVIATE_ENDPOINT']
-WEAVIATE_QUERY_PATH = config['WEAVIATE_QUERY_PATH']
 
 def load_config(file_path=path_to_config):
     with open(file_path, 'r') as file:
@@ -239,6 +235,11 @@ SAFE_ALLOWED_TAGS: list[str] = []
 SAFE_ALLOWED_ATTRS: dict[str, list[str]] = {}
 SAFE_ALLOWED_PROTOCOLS: list[str] = []
 _CONTROL_WHITELIST = {'\n', '\r', '\t'}
+
+DB_NAME = config['DB_NAME']
+API_KEY = config['API_KEY']
+WEAVIATE_ENDPOINT = config['WEAVIATE_ENDPOINT']
+WEAVIATE_QUERY_PATH = config['WEAVIATE_QUERY_PATH']
 
 def _strip_control_chars(s: str) -> str:
 
