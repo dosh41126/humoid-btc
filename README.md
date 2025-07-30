@@ -79,8 +79,6 @@ Working for a more trustworthy economy
 
 *(P.S. — The system is real. I’d be honored to walk your team through a working prototype.)*
 
-
-
 ##  Humoid BTC
 
 ### 0.1 Project Summary

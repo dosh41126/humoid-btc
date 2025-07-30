@@ -1843,7 +1843,6 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.error("[Settings] Failed saving Coinbase credentials: %s", e)
 
-
     def memory_aging_scheduler(self):
 
         self.run_long_term_memory_aging()
