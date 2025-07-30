@@ -123,7 +123,6 @@ import requests
 import io
 import sys
 import random
-import re
 import json
 from concurrent.futures import ThreadPoolExecutor
 from llama_cpp import Llama
@@ -151,9 +150,7 @@ import httpx
 import math
 from typing import List, Tuple
 from math import log2
-import numpy as np
 from scipy.spatial.distance import cosine
-from collections import Counter
 import re
 from statistics import median, mode
 import time
