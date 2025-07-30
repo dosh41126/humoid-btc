@@ -2256,7 +2256,7 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.warning(f"[Weaviate Live Position Cleanup Error] {e}")
 
-    def fetch_crypto_gecko(symbol: str = "bitcoin", vs_currency: str = "usd") -> List[Tuple[int, float]]:
+    def fetch_crypto_gecko(self, symbol: str = "bitcoin", vs_currency: str = "usd") -> List[Tuple[int, float]]:
 
         try:
             url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
