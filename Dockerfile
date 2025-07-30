@@ -2,7 +2,6 @@ FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential python3-dev python3-tk \
     libgl1-mesa-glx curl iptables dnsutils openssl \
@@ -10,19 +9,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
 COPY . .
 
-# Generate VAULT_PASSPHRASE from random entropy
 RUN openssl rand -hex 32 > /app/.vault_pass && \
     echo "export VAULT_PASSPHRASE=$(cat /app/.vault_pass)" > /app/set_env.sh && \
     chmod +x /app/set_env.sh
 
-# Generate default config.json
 RUN python - << 'EOF' > /app/config.json
 import random, string, json
 print(json.dumps({
@@ -40,22 +35,18 @@ print(json.dumps({
 }))
 EOF
 
-# Create firewall start and model download script
 RUN cat << 'EOF' > /app/firewall_start.sh
-#!/bin/bash
+
 set -e
 source /app/set_env.sh
 
-# Reset firewall
 iptables -F OUTPUT
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-# Temporarily allow all for model downloads
 iptables -A OUTPUT -j ACCEPT
 
-# Download model files if not present
 BASE_MODEL_PATH=/data/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf
 BASE_MODEL_URL=https://huggingface.co/QuantFactory/Meta-Llama-3-8B-Instruct-GGUF/resolve/main/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf
 BASE_MODEL_SHA256=86c8ea6c8b755687d0b723176fcd0b2411ef80533d23e2a5030f845d13ab2db7
@@ -83,13 +74,19 @@ download_and_verify () {
 download_and_verify "$BASE_MODEL_URL" "$BASE_MODEL_PATH" "$BASE_MODEL_SHA256"
 download_and_verify "$MM_PROJ_URL" "$MM_PROJ_PATH" "$MM_PROJ_SHA256"
 
-# Restrict firewall after setup
 iptables -F OUTPUT
 iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 
-for DOMAIN in huggingface.co objects.githubusercontent.com api.open-meteo.com api.coingecko.com; do
+for DOMAIN in \
+    huggingface.co \
+    objects.githubusercontent.com \
+    api.open-meteo.com \
+    api.coingecko.com \
+    api.exchange.coinbase.com \
+    api.coinbase.com \
+    ; do
   getent ahosts "$DOMAIN" | awk '/STREAM/ {print $1}' | sort -u | \
     while read ip; do
       [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \

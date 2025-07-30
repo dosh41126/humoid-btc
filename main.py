@@ -732,7 +732,6 @@ fhe_v2 = AdvancedHomomorphicVectorMemory()
 
 
 def fetch_coinbase_spot_positions() -> list[dict]:
-    """Fetch user's asset holdings from Coinbase Exchange API (spot)."""
     API_KEY    = get_encrypted_env_var("COINBASE_API_KEY")
     API_SECRET = get_encrypted_env_var("COINBASE_API_SECRET")
     PASSPHRASE = get_encrypted_env_var("COINBASE_API_PASSPHRASE")
@@ -772,7 +771,6 @@ def fetch_coinbase_spot_positions() -> list[dict]:
         return []
 
 def fetch_coinbase_derivative_positions() -> list[dict]:
-    """Fetch user's derivative (CFM) positions from Coinbase API."""
     try:
         API_KEY = get_encrypted_env_var("COINBASE_API_KEY")
         headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -1329,7 +1327,6 @@ def fetch_relevant_info(chunk, client, user_input):
         logger.error(f"[FHEv2 retrieval] failed: {e}")
         return ""
 
-
 def llama_generate(prompt, weaviate_client=None, user_input=None, temperature=1.0, top_p=0.9):
 
     MAX_TOKENS_PER_CHUNK   = 2048
@@ -1413,7 +1410,6 @@ def llama_generate(prompt, weaviate_client=None, user_input=None, temperature=1.
     except Exception as e:
         logger.error(f"[Gamma‑13X Fault] LLML core error: {e}")
         return None
-
 
 def tokenize_and_generate(chunk, token, max_tokens, chunk_size, temperature=1.0, top_p=0.9):
     try:
@@ -2284,6 +2280,7 @@ class App(customtkinter.CTk):
                 logger.error(f"Error in mapping keyword '{keyword}': {e}")
 
         return mapped_classes
+
     def generate_response(self, user_input: str) -> None:
         try:
             if not user_input:
@@ -2320,7 +2317,6 @@ class App(customtkinter.CTk):
             song = self.last_song_entry.get().strip() or "None"
             chaos, emotive = self.chaos_toggle.get(), self.emotion_toggle.get()
 
-            # Gather prices from both sources
             prices = fetch_crypto_gecko("bitcoin", "usd")
             coinbase_price = fetch_coinbase_price("BTC-USD")
             if len(prices) < 15 or not coinbase_price:
@@ -2343,18 +2339,14 @@ class App(customtkinter.CTk):
             entropy = np.std([r, g, b, cpu_load])
             affective_momentum = bias_factor * theta + entropy
             time_lock = datetime.utcnow().isoformat()
-
-            # --- Position fetchers
             spot_positions = fetch_coinbase_spot_positions()
             deriv_positions = fetch_coinbase_derivative_positions()
             all_api_positions = spot_positions + deriv_positions
-            # Remove 0-size entries (if any)
             all_api_positions = [p for p in all_api_positions if float(p.get("size", 0)) > 0]
 
-            # Save open positions to Weaviate for memory/trace (if not already there)
             for pos in all_api_positions:
                 uuid_key = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}-{pos['symbol']}-{pos['size']}"))
-                # Try avoid duplicates: delete previous if size changed (i.e., trade modified/closed)
+
                 try:
                     self.client.data_object.delete(
                         uuid=uuid_key,
@@ -2378,7 +2370,6 @@ class App(customtkinter.CTk):
                 except Exception as e:
                     logger.warning(f"[Weaviate Position Log Error] {e}")
 
-            # Also: remove from Weaviate any positions that no longer exist
             try:
                 wq = self.client.query.get("CryptoLivePosition", ["uuid", "symbol", "size"]).with_where({
                     "path": ["user_id"],
@@ -2660,76 +2651,6 @@ class App(customtkinter.CTk):
             print(f"Error in extract_keywords: {e}")
             return []
 
-    def generate_images(self, message):
-        try:
-            url = config['IMAGE_GENERATION_URL']
-            payload = self.prepare_image_generation_payload(message)
-            response = requests.post(url, json=payload)
-
-            if response.status_code == 200:
-                self.process_image_response(response)
-            else:
-                logger.error(f"Error generating image: HTTP {response.status_code}")
-
-        except Exception as e:
-            logger.error(f"Error in generate_images: {e}")
-
-    def prepare_image_generation_payload(self, message):
-        safe_prompt = sanitize_text(message, max_len=1000)
-        return {
-            "prompt": safe_prompt,
-            "steps": 51,
-            "seed": random.randrange(sys.maxsize),
-            "enable_hr": "false",
-            "denoising_strength": "0.7",
-            "cfg_scale": "7",
-            "width": 526,
-            "height": 756,
-            "restore_faces": "true",
-        }
-
-    def process_image_response(self, response):
-        try:
-            image_data = response.json()['images']
-            self.loaded_images = []  
-
-            for img_data in image_data:
-                img_tk = self.convert_base64_to_tk(img_data)
-                if img_tk:
-                    self.response_queue.put({'type': 'image', 'data': img_tk})
-                    self.loaded_images.append(img_tk)  
-                    self.save_generated_image(img_data)
-                else:
-                    logger.warning("Failed to convert base64 image to tkinter image.")
-        except ValueError as e:
-            logger.error(f"Error processing image data: {e}")
-
-    def convert_base64_to_tk(self, base64_data):
-        if ',' in base64_data:
-            base64_data = base64_data.split(",", 1)[1]
-        image_data = base64.b64decode(base64_data)
-        try:
-            photo = tk.PhotoImage(data=base64_data)
-            return photo
-        except tk.TclError as e:
-            logger.error(f"Error converting base64 to PhotoImage: {e}")
-            return None
-
-    def save_generated_image(self, base64_data):
-        try:
-            if ',' in base64_data:
-                base64_data = base64_data.split(",", 1)[1]
-            image_bytes = base64.b64decode(base64_data)
-            file_name = f"generated_image_{uuid.uuid4()}.png"
-            image_path = os.path.join("saved_images", file_name)
-            if not os.path.exists("saved_images"):
-                os.makedirs("saved_images")
-            with open(image_path, 'wb') as f:
-                f.write(image_bytes)
-            print(f"Image saved to {image_path}")
-        except Exception as e:
-            logger.error(f"Error saving generated image: {e}")
-
     def update_username(self):
         new_username = self.username_entry.get()
         if new_username:
@@ -2809,8 +2730,6 @@ class App(customtkinter.CTk):
         self.username_entry.grid(row=0, column=1, padx=5, pady=5)
         self.update_username_button = customtkinter.CTkButton(self.settings_frame, text="Update", command=self.update_username)
         self.update_username_button.grid(row=0, column=2, padx=5, pady=5)
-
-        # -- Existing code above --
         self.username_label = customtkinter.CTkLabel(self.settings_frame, text="Username:")
         self.username_label.grid(row=0, column=0, padx=5, pady=5)
         self.username_entry = customtkinter.CTkEntry(self.settings_frame, width=120, placeholder_text="Enter username")
@@ -2818,13 +2737,10 @@ class App(customtkinter.CTk):
         self.username_entry.grid(row=0, column=1, padx=5, pady=5)
         self.update_username_button = customtkinter.CTkButton(self.settings_frame, text="Update", command=self.update_username)
         self.update_username_button.grid(row=0, column=2, padx=5, pady=5)
-
-        # === Coinbase API Keys Section (SECURE) ===
         self.coinbase_label = customtkinter.CTkLabel(self.settings_frame, text="Coinbase API Key:")
         self.coinbase_label.grid(row=1, column=0, padx=5, pady=5)
         self.coinbase_api_entry = customtkinter.CTkEntry(self.settings_frame, width=120, show="*", placeholder_text="API Key")
         self.coinbase_api_entry.grid(row=1, column=1, padx=5, pady=5)
-        # Load from ENV, decrypted
         api_val = get_encrypted_env_var("COINBASE_API_KEY")
         if api_val: self.coinbase_api_entry.insert(0, api_val)
 
