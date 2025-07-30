@@ -474,15 +474,13 @@ class SecureKeyManager:
             self._derived_keys[ver] = self._derive_key(master_secret, vault_salt)
 
     def _get_passphrase(self) -> bytes:
-
         pw = os.getenv(VAULT_PASSPHRASE_ENV)
-        if pw is None or pw == "":
-            pw = base64.b64encode(os.urandom(32)).decode()
-            logging.warning(
-                "[SecureKeyManager] VAULT_PASSPHRASE not set; generated ephemeral key. "
-                "Vault will not be readable across restarts!"
+        if not pw or not pw.strip():
+            raise RuntimeError(
+                "VAULT_PASSPHRASE is required for vault encryption/decryption. "
+                "Set the environment variable VAULT_PASSPHRASE to a strong secret."
             )
-        return pw.encode("utf-8")
+        return pw.strip().encode("utf-8")
 
     def _derive_vault_key(self, passphrase: bytes, salt: bytes) -> bytes:
 
