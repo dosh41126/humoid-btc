@@ -1510,11 +1510,7 @@ def fetch_live_weather(lat: float, lon: float, fallback_temp_f: float = 70.0) ->
         logger.warning(f"[Weather] Fallback due to error: {e}")
         return fallback_temp_f, 0, False
 
-IS_MIXED = True
-dev = qml.device("default.mixed" if IS_MIXED else "default.qubit", wires=3)
-...
-if IS_MIXED and weather_mod > 0.5:
-    qml.AmplitudeDamping(0.1 * weather_mod, wires=2)
+dev = qml.device("default.qubit", wires=3)
 
 @qml.qnode(dev)
 def rgb_quantum_gate(
