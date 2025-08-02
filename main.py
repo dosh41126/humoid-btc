@@ -3618,12 +3618,13 @@ class BTCChartPanel(customtkinter.CTkFrame):
         return "BTC-USD"
 
     def _draw(self, df: pd.DataFrame):
-
-        mc = mpf.make_marketcolors(up="#26a69a", down="#ef5350", wick="inherit", edge="inherit", volume="in")
+        mc = mpf.make_marketcolors(up="#26a69a", down="#ef5350",
+                                   wick="inherit", edge="inherit", volume="in")
         style = mpf.make_mpf_style(base_mpf_style="nightclouds", marketcolors=mc,
                                    facecolor="#101418", edgecolor="#101418", gridcolor="#2a2f36")
 
-        self.ax.clear(); self.axv.clear()
+        self.ax.clear()
+        self.axv.clear()
 
         if df.empty:
             self.ax.text(0.5, 0.5, "No data", color="w", ha="center", va="center", transform=self.ax.transAxes)
@@ -3631,22 +3632,50 @@ class BTCChartPanel(customtkinter.CTkFrame):
             self.canvas.draw_idle()
             return
 
-        spans = (8, 13, 21, 34, 55, 89)
-        addplots = [mpf.make_addplot(df[f"EMA{s}"], ax=self.ax, color="#7aa2f7", width=1, alpha=0.8) for s in spans]
-        addplots.append(
-            mpf.make_addplot(
-                df["RIBBON_LOW"], ax=self.ax, color="none",
-                fill_between=dict(y1=df["RIBBON_LOW"], y2=df["RIBBON_HIGH"], alpha=0.12, color="#7aa2f7")
-            )
+        bull = (
+            (df["EMA8"]  > df["EMA13"]) &
+            (df["EMA13"] > df["EMA21"]) &
+            (df["EMA21"] > df["EMA34"]) &
+            (df["EMA34"] > df["EMA55"]) &
+            (df["EMA55"] > df["EMA89"])
+        )
+        bear = (
+            (df["EMA8"]  < df["EMA13"]) &
+            (df["EMA13"] < df["EMA21"]) &
+            (df["EMA21"] < df["EMA34"]) &
+            (df["EMA34"] < df["EMA55"]) &
+            (df["EMA55"] < df["EMA89"])
         )
 
-        mpf.plot(df, type="candle", style=style,
-                 ax=self.ax, volume=self.axv,
-                 addplot=addplots, xrotation=15, datetime_format="%m-%d %H:%M")
+
+        def cloud(mask, color, alpha=0.20):
+            y1 = df["RIBBON_LOW"].where(mask)
+            y2 = df["RIBBON_HIGH"].where(mask)
+            return mpf.make_addplot(
+                y1, ax=self.ax, color="none",
+                fill_between=dict(y1=y1, y2=y2, alpha=alpha, color=color)
+            )
+
+        spans = (8, 13, 21, 34, 55, 89)
+        addplots = [
+            mpf.make_addplot(df[f"EMA{s}"], ax=self.ax, color="#7aa2f7", width=1, alpha=0.85)
+            for s in spans
+        ]
+
+        addplots += [
+            cloud(bull, "#facc15", 0.22), 
+            cloud(bear, "#ffffff", 0.18), 
+        ]
+
+        mpf.plot(
+            df, type="candle", style=style,
+            ax=self.ax, volume=self.axv,
+            addplot=addplots, xrotation=15, datetime_format="%m-%d %H:%M"
+        )
 
         self.ax.set_title(f"{self.market.get()} · {self.interval.get()}m", color="w", pad=8)
         self.canvas.draw_idle()
-
+        
     def refresh(self):
 
         try:
@@ -3776,7 +3805,6 @@ class AccountOverviewPanel(customtkinter.CTkFrame):
             self._refresh_inflight = False
 
     def _schedule(self):
-        """Periodic refresh."""
         try:
             self.refresh()
         finally:
