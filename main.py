@@ -173,11 +173,9 @@ def sanitize_for_prompt(text: str, *, max_len: int = 2000) -> str:
 # ---------- Account / Positions helpers (Advanced Trade v3) ----------
 
 def _cb_bearer_headers() -> dict:
-    bearer = _coinbase_adv_bearer() or get_encrypted_env_var("COINBASE_API_KEY")
+    bearer = _coinbase_adv_bearer()
     if not bearer:
-        raise RuntimeError("Coinbase Advanced Trade auth not configured.")
-    if not bearer.startswith("Bearer "):
-        bearer = f"Bearer {bearer}"
+        raise RuntimeError("Coinbase Advanced Trade ES256 JWT could not be built.")
     return {"Authorization": bearer}
 
 
@@ -501,29 +499,17 @@ def fetch_coingecko_ohlc(coingecko_id: str, minutes=15, bars=300) -> pd.DataFram
 
 
 def fetch_ohlc_with_fallback(market: str, minutes=15, bars=300) -> pd.DataFrame:
-    """
-    market keys:
-      'BTC-USD'  -> Coinbase spot; CG fallback 'bitcoin'
-      'ETH-USD'  -> Coinbase spot; CG fallback 'ethereum'
-      'ETH-PERP' -> Coinbase Advanced Trade perps (ETH-PERP); fallback to ETH spot
-    """
     if market == "BTC-USD":
-        df = fetch_coinbase_spot_ohlc("BTC-USD", minutes, bars)
+        df = _spot_ohlc("BTC-USD", minutes, bars)
         return df if not df.empty else fetch_coingecko_ohlc("bitcoin", minutes, bars)
-
     if market == "ETH-USD":
-        df = fetch_coinbase_spot_ohlc("ETH-USD", minutes, bars)
+        df = _spot_ohlc("ETH-USD", minutes, bars)
         return df if not df.empty else fetch_coingecko_ohlc("ethereum", minutes, bars)
-
     if market == "ETH-PERP":
         df = fetch_coinbase_perp_ohlc("ETH-PERP", minutes, bars)
-        if not df.empty:
-            return df
-        logger.warning("[OHLC] ETH-PERP empty; falling back to ETH spot.")
-        return fetch_coinbase_spot_ohlc("ETH-USD", minutes, bars)
+        return df if not df.empty else _spot_ohlc("ETH-USD", minutes, bars)
+    return _spot_ohlc("BTC-USD", minutes, bars)
 
-    # default
-    return fetch_coinbase_spot_ohlc("BTC-USD", minutes, bars)
 
 def add_ema_ribbon(df: pd.DataFrame, spans=(8,13,21,34,55,89)) -> pd.DataFrame:
     for s in spans:
@@ -1524,7 +1510,11 @@ def fetch_live_weather(lat: float, lon: float, fallback_temp_f: float = 70.0) ->
         logger.warning(f"[Weather] Fallback due to error: {e}")
         return fallback_temp_f, 0, False
 
-dev = qml.device("default.qubit", wires=3)
+IS_MIXED = True
+dev = qml.device("default.mixed" if IS_MIXED else "default.qubit", wires=3)
+...
+if IS_MIXED and weather_mod > 0.5:
+    qml.AmplitudeDamping(0.1 * weather_mod, wires=2)
 
 @qml.qnode(dev)
 def rgb_quantum_gate(
@@ -3461,6 +3451,13 @@ class App(customtkinter.CTk):
             logger.warning(f"[Chart refresh] {e}")
         finally:
             self.after(60_000, self._schedule_chart_refresh)  # every 60s
+    def _bind_enter_behavior(self):
+        def _on_return(event):
+            if event.state & 0x0001:  # Shift
+                return  # allow newline
+            self.on_submit()
+            return "break"
+        self.input_textbox.bind("<Return>", _on_return)
         
     def setup_gui(self):
         customtkinter.set_appearance_mode("Dark")
@@ -3602,7 +3599,9 @@ class App(customtkinter.CTk):
 
         self.grid_columnconfigure(4, weight=1)
 
+ 
 
+        self._bind_enter_behavior()
         game_fields = [
             ("Game Type:", "game_type_entry", "e.g. Football"),
             ("Team Name:", "team_name_entry", "e.g. Clemson Tigers"),
@@ -3714,17 +3713,40 @@ class BTCChartPanel(customtkinter.CTkFrame):
         self.canvas.draw_idle()
 
     def refresh(self):
-        mins = int(self.interval.get())
-        market = self._market_key()
-        threading.Thread(target=self._refresh_bg, args=(market, mins), daemon=True).start()
+        """
+        Called when the user triggers a manual refresh.
+        Launches background thread to fetch data without blocking UI.
+        """
+        try:
+            mins = int(self.interval.get())
+            market = self._market_key()
+            threading.Thread(
+                target=self._refresh_bg,
+                args=(market, mins),
+                daemon=True
+            ).start()
+        except Exception as e:
+            print(f"[refresh] Failed to start background refresh: {e}")
+            # Optional: show error in status label
 
     def _refresh_bg(self, market: str, mins: int):
-        df = fetch_ohlc_with_fallback(market=market, minutes=mins, bars=300)
-        if not df.empty:
-            df = add_ema_ribbon(df)  # your existing helper
-        self.after(0, lambda: self._draw(df))
+        """
+        Background worker to fetch chart data.
+        On success, schedules UI thread to update the chart.
+        """
+        try:
+            df = fetch_ohlc_with_fallback(market=market, minutes=mins, bars=300)
+            if df is not None and not df.empty:
+                df = add_ema_ribbon(df)
+            else:
+                df = pd.DataFrame()  # fallback to empty
 
-
+            # Safely update UI from the main thread
+            self.after(0, lambda: self._draw(df))
+        except Exception as e:
+            print(f"[refresh_bg] Error fetching chart data: {e}")
+            self.after(0, lambda: self._draw(pd.DataFrame()))
+            
 class AccountOverviewPanel(customtkinter.CTkFrame):
     """
     Small dashboard: total account value, spot USD, spot crypto USD value,
