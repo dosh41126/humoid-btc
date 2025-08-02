@@ -1510,7 +1510,7 @@ def fetch_live_weather(lat: float, lon: float, fallback_temp_f: float = 70.0) ->
         logger.warning(f"[Weather] Fallback due to error: {e}")
         return fallback_temp_f, 0, False
 
-dev = qml.device("default.qubit", wires=3)
+dev = qml.device("default.mixed", wires=3)
 
 @qml.qnode(dev)
 def rgb_quantum_gate(
@@ -2154,7 +2154,12 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.warning(f"[decrypt] Could not decrypt value (returning raw): {e}")
             return value
-
+            
+    def destroy(self):
+        try: self.executor.shutdown(wait=False, cancel_futures=True)
+        except Exception: pass
+        super().destroy()
+    
     def __init__(self, user_identifier):
         super().__init__()
         self.user_id = user_identifier
