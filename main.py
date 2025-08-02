@@ -170,7 +170,6 @@ def sanitize_for_prompt(text: str, *, max_len: int = 2000) -> str:
     cleaned = _PROMPT_INJECTION_PAT.sub('', cleaned)
     return cleaned.strip()
 
-# ---------- Account / Positions helpers (Advanced Trade v3) ----------
 
 def _cb_bearer_headers() -> dict:
     bearer = _coinbase_adv_bearer()
@@ -180,9 +179,7 @@ def _cb_bearer_headers() -> dict:
 
 
 def fetch_advtrade_accounts(limit: int = 250) -> list[dict]:
-    """
-    List spot accounts & balances (Advanced Trade).
-    """
+
     try:
         url = "https://api.coinbase.com/api/v3/brokerage/accounts"
         r = httpx.get(url, headers=_cb_bearer_headers(), params={"limit": limit}, timeout=6.0)
@@ -193,9 +190,7 @@ def fetch_advtrade_accounts(limit: int = 250) -> list[dict]:
         return []
 
 def fetch_futures_balance_summary() -> dict:
-    """
-    Get CFM (US futures) balance summary: includes cfm_usd_balance, unrealized_pnl, etc.
-    """
+
     try:
         url = "https://api.coinbase.com/api/v3/brokerage/cfm/balance_summary"
         r = httpx.get(url, headers=_cb_bearer_headers(), timeout=6.0)
@@ -206,9 +201,7 @@ def fetch_futures_balance_summary() -> dict:
         return {}
 
 def fetch_futures_positions() -> list[dict]:
-    """
-    List open CFM futures positions with number_of_contracts.
-    """
+
     try:
         url = "https://api.coinbase.com/api/v3/brokerage/cfm/positions"
         r = httpx.get(url, headers=_cb_bearer_headers(), timeout=6.0)
@@ -217,8 +210,6 @@ def fetch_futures_positions() -> list[dict]:
     except Exception as e:
         logger.warning(f"[Futures Positions] {e}")
         return []
-
-# ---------- Lightweight pricing for spot valuation ----------
 
 _CG_IDS = {
     "BTC": "bitcoin",
@@ -234,9 +225,7 @@ _CG_IDS = {
 }
 
 def _price_usd_coinbase(symbol: str) -> Optional[float]:
-    """
-    Try Coinbase v2 simple spot price (broad asset coverage).
-    """
+
     try:
         url = f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot"
         r = httpx.get(url, timeout=4.0)
@@ -266,18 +255,7 @@ def get_usd_price(symbol: str) -> Optional[float]:
     return p
 
 def compute_account_overview() -> Dict[str, float | int | list[tuple[str, float]]]:
-    """
-    Aggregates:
-      - spot_usd_cash: USD account balance
-      - spot_crypto_value_usd: USD value of non-USD spot assets
-      - futures_usd_cash: cfm_usd_balance (futures)
-      - futures_unrealized_pnl: current unrealized PnL
-      - futures_contracts_open: total number_of_contracts across open positions
-      - futures_positions_count: count of open positions
-      - spot_nonusd_positions: list[(symbol, qty)] for non-zero balances (non-USD)
-      - total_account_value_usd: spot_usd_cash + spot_crypto_value_usd + futures_usd_cash + unrealized_pnl
-    """
-    # Spot accounts
+
     accts = fetch_advtrade_accounts()
     spot_usd_cash = 0.0
     spot_nonusd_positions: list[tuple[str, float]] = []
@@ -296,13 +274,11 @@ def compute_account_overview() -> Dict[str, float | int | list[tuple[str, float]
         else:
             spot_nonusd_positions.append((cur, qty))
 
-    # Value spot non-USD
     spot_crypto_value_usd = 0.0
     for sym, qty in spot_nonusd_positions:
         price = get_usd_price(sym) or 0.0
         spot_crypto_value_usd += qty * price
 
-    # Futures balances
     fut = fetch_futures_balance_summary()
     def _num(d: dict, key: str) -> float:
         try:
@@ -311,8 +287,6 @@ def compute_account_overview() -> Dict[str, float | int | list[tuple[str, float]
             return 0.0
     futures_usd_cash = _num(fut, "cfm_usd_balance")
     futures_unrealized_pnl = _num(fut, "unrealized_pnl")
-
-    # Futures positions
     pos = fetch_futures_positions()
     fut_contracts_open = 0.0
     fut_positions_count = 0
@@ -340,12 +314,7 @@ def compute_account_overview() -> Dict[str, float | int | list[tuple[str, float]
 
 
 def _coinbase_adv_bearer() -> str:
-    """
-    Build a short-lived ES256 JWT for Coinbase Advanced Trade REST.
-    Env:
-      COINBASE_ADV_API_KEY      -> API key ID (kid)
-      COINBASE_ADV_PRIVATE_KEY  -> ECDSA private key (PEM string, PKCS8)
-    """
+
     try:
         if jwt is None:
             logger.warning("[CDP Auth] PyJWT not installed.")
@@ -371,9 +340,7 @@ def _coinbase_adv_bearer() -> str:
 
 
 def _granularity_for(minutes: int) -> str:
-    """
-    Coinbase Advanced Trade candle granularities (enum).
-    """
+
     m = int(minutes)
     return {
         1: "ONE_MINUTE",
@@ -388,10 +355,7 @@ def _granularity_for(minutes: int) -> str:
 
 
 def _parse_cdp_candles(candles: list) -> pd.DataFrame:
-    """
-    Parse Advanced Trade public product candles:
-    item: {"start":"<unix>", "low":"", "high":"", "open":"", "close":"", "volume":""}
-    """
+
     if not candles:
         return pd.DataFrame()
     df = pd.DataFrame(candles)
@@ -403,9 +367,6 @@ def _parse_cdp_candles(candles: list) -> pd.DataFrame:
 
 
 def _spot_ohlc(product_id: str, minutes=15, bars=300) -> pd.DataFrame:
-    """
-    SPOT via Coinbase Exchange public API: /products/{id}/candles (no auth).
-    """
     try:
         gran = int(minutes) * 60
         end_ts = int(time.time())
@@ -427,11 +388,6 @@ def _spot_ohlc(product_id: str, minutes=15, bars=300) -> pd.DataFrame:
 
 
 def fetch_coinbase_perp_ohlc(product_id: str = "ETH-PERP", minutes=15, bars=300) -> pd.DataFrame:
-    """
-    PERPETUAL FUTURES via Coinbase Advanced Trade:
-      GET /api/v3/brokerage/market/products/{product_id}/candles
-    Requires ES256 JWT in Authorization: Bearer <token>.
-    """
     try:
         bearer = _coinbase_adv_bearer()
         if not bearer:
@@ -672,7 +628,6 @@ class CKKSManager:
         ct = ts.ckks_vector_from(self._sec_ctx, base64.b64decode(enc_scores_b64.encode()))
         vals = ct.decrypt()
         return float(vals[0])
-
 
 class AdvancedHomomorphicVectorMemory:
 
@@ -3451,11 +3406,11 @@ class App(customtkinter.CTk):
         except Exception as e:
             logger.warning(f"[Chart refresh] {e}")
         finally:
-            self.after(60_000, self._schedule_chart_refresh)  # every 60s
+            self.after(60_000, self._schedule_chart_refresh)
     def _bind_enter_behavior(self):
         def _on_return(event):
-            if event.state & 0x0001:  # Shift
-                return  # allow newline
+            if event.state & 0x0001: 
+                return 
             self.on_submit()
             return "break"
         self.input_textbox.bind("<Return>", _on_return)
@@ -3463,17 +3418,9 @@ class App(customtkinter.CTk):
     def setup_gui(self):
         customtkinter.set_appearance_mode("Dark")
         self.title("Dyson Sphere Quantum Oracle")
-        
-
-
         self.chart_panel = BTCChartPanel(self, corner_radius=10)
         self.chart_panel.grid(row=0, column=4, rowspan=4, padx=(0, 20), pady=(20, 20), sticky="nsew")
-
-        # Schedule periodic refresh (every 60s) AFTER panel exists
         self.after(60_000, self._schedule_chart_refresh)
-
-
-        # add this just after the chart:
         self.account_panel = AccountOverviewPanel(self, corner_radius=10)
         self.account_panel.grid(row=4, column=4, padx=(0, 20), pady=(0, 20), sticky="nsew")
         window_width = 1920
@@ -3599,9 +3546,6 @@ class App(customtkinter.CTk):
         self.emotion_toggle.grid(row=5, column=2, columnspan=2, padx=5, pady=5)
 
         self.grid_columnconfigure(4, weight=1)
-
- 
-
         self._bind_enter_behavior()
         game_fields = [
             ("Game Type:", "game_type_entry", "e.g. Football"),
@@ -3616,10 +3560,7 @@ class App(customtkinter.CTk):
             entry.grid(row=6 + idx, column=1, columnspan=3, padx=5, pady=5)
 
 class BTCChartPanel(customtkinter.CTkFrame):
-    """
-    Chart panel supporting BTC-USD (spot), ETH-USD (spot), ETH-PERP (Coinbase futures).
-    Reuses a single Matplotlib Figure/Axes; background thread fetch; EMA ribbon overlay.
-    """
+
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.figure = None
@@ -3627,8 +3568,6 @@ class BTCChartPanel(customtkinter.CTkFrame):
         self.toolbar = None
         self.ax = None
         self.axv = None
-
-        # Controls
         ctrl = customtkinter.CTkFrame(self)
         ctrl.pack(side="top", fill="x", padx=8, pady=6)
 
@@ -3650,12 +3589,8 @@ class BTCChartPanel(customtkinter.CTkFrame):
 
         self.refresh_btn = customtkinter.CTkButton(ctrl, text="Refresh", command=self.refresh)
         self.refresh_btn.pack(side="left", padx=6)
-
-        # Figure area
         self.fig_container = customtkinter.CTkFrame(self)
         self.fig_container.pack(side="top", fill="both", expand=True)
-
-        # Build single Figure/Axes once
         self.figure = Figure(figsize=(10, 6), dpi=100)
         gs = GridSpec(nrows=2, ncols=1, height_ratios=[3, 1], figure=self.figure)
         self.ax = self.figure.add_subplot(gs[0])
@@ -3673,7 +3608,7 @@ class BTCChartPanel(customtkinter.CTkFrame):
         except Exception:
             pass
 
-        self.refresh()  # initial draw
+        self.refresh()
 
     def _market_key(self) -> str:
         label = self.market.get()
@@ -3683,7 +3618,7 @@ class BTCChartPanel(customtkinter.CTkFrame):
         return "BTC-USD"
 
     def _draw(self, df: pd.DataFrame):
-        # Style
+
         mc = mpf.make_marketcolors(up="#26a69a", down="#ef5350", wick="inherit", edge="inherit", volume="in")
         style = mpf.make_mpf_style(base_mpf_style="nightclouds", marketcolors=mc,
                                    facecolor="#101418", edgecolor="#101418", gridcolor="#2a2f36")
@@ -3696,7 +3631,6 @@ class BTCChartPanel(customtkinter.CTkFrame):
             self.canvas.draw_idle()
             return
 
-        # EMA ribbon
         spans = (8, 13, 21, 34, 55, 89)
         addplots = [mpf.make_addplot(df[f"EMA{s}"], ax=self.ax, color="#7aa2f7", width=1, alpha=0.8) for s in spans]
         addplots.append(
@@ -3714,10 +3648,7 @@ class BTCChartPanel(customtkinter.CTkFrame):
         self.canvas.draw_idle()
 
     def refresh(self):
-        """
-        Called when the user triggers a manual refresh.
-        Launches background thread to fetch data without blocking UI.
-        """
+
         try:
             mins = int(self.interval.get())
             market = self._market_key()
@@ -3728,31 +3659,23 @@ class BTCChartPanel(customtkinter.CTkFrame):
             ).start()
         except Exception as e:
             print(f"[refresh] Failed to start background refresh: {e}")
-            # Optional: show error in status label
 
     def _refresh_bg(self, market: str, mins: int):
-        """
-        Background worker to fetch chart data.
-        On success, schedules UI thread to update the chart.
-        """
+
         try:
             df = fetch_ohlc_with_fallback(market=market, minutes=mins, bars=300)
             if df is not None and not df.empty:
                 df = add_ema_ribbon(df)
             else:
-                df = pd.DataFrame()  # fallback to empty
+                df = pd.DataFrame()
 
-            # Safely update UI from the main thread
             self.after(0, lambda: self._draw(df))
         except Exception as e:
             print(f"[refresh_bg] Error fetching chart data: {e}")
             self.after(0, lambda: self._draw(pd.DataFrame()))
             
 class AccountOverviewPanel(customtkinter.CTkFrame):
-    """
-    Small dashboard: total account value, spot USD, spot crypto USD value,
-    futures USD, open futures contracts & positions, plus a short spot holdings list.
-    """
+
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
 
@@ -3780,7 +3703,7 @@ class AccountOverviewPanel(customtkinter.CTkFrame):
         self.grid_rowconfigure(8, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # initial draw + schedule
+        self._refresh_inflight = False 
         self.refresh()
         self.after(60_000, self._schedule)
 
@@ -3799,8 +3722,37 @@ class AccountOverviewPanel(customtkinter.CTkFrame):
             return "—"
 
     def refresh(self):
+        if self._refresh_inflight:
+            return
+        self._refresh_inflight = True
+        threading.Thread(target=self._refresh_bg, daemon=True).start()
+
+    def _refresh_bg(self):
+        ov = None
         try:
             ov = compute_account_overview()
+        except Exception as e:
+            logger.warning(f"[Account Panel] refresh failed: {e}")
+        finally:
+
+            self.after(0, lambda: self._draw(ov))
+
+    def _draw(self, ov: dict | None):
+
+        try:
+            if not ov:
+                self.total_lbl.configure(text="Total Value: —")
+                self.spot_usd.configure(text="Spot USD: —")
+                self.spot_val.configure(text="Spot Crypto (USD): —")
+                self.fut_usd.configure(text="Futures USD: —")
+                self.fut_pnl.configure(text="Futures Unrealized PnL: —")
+                self.fut_open.configure(text="Open Futures: — positions / — contracts")
+                self.holdings.configure(state="normal")
+                self.holdings.delete("1.0", tk.END)
+                self.holdings.insert(tk.END, "(unavailable)")
+                self.holdings.configure(state="disabled")
+                return
+
             self.total_lbl.configure(text=f"Total Value: {self._fmt_money(ov['total_account_value_usd'])}")
             self.spot_usd.configure(text=f"Spot USD: {self._fmt_money(ov['spot_usd_cash'])}")
             self.spot_val.configure(text=f"Spot Crypto (USD): {self._fmt_money(ov['spot_crypto_value_usd'])}")
@@ -3811,7 +3763,6 @@ class AccountOverviewPanel(customtkinter.CTkFrame):
                      f"{self._fmt_int(ov['futures_contracts_open'])} contracts"
             )
 
-            # Show top 6 spot holdings (non-USD)
             positions = sorted(ov["spot_nonusd_positions"], key=lambda t: t[0])[:6]
             self.holdings.configure(state="normal")
             self.holdings.delete("1.0", tk.END)
@@ -3821,15 +3772,15 @@ class AccountOverviewPanel(customtkinter.CTkFrame):
             else:
                 self.holdings.insert(tk.END, "(none)")
             self.holdings.configure(state="disabled")
-        except Exception as e:
-            logger.warning(f"[Account Panel] refresh failed: {e}")
+        finally:
+            self._refresh_inflight = False
 
     def _schedule(self):
+        """Periodic refresh."""
         try:
             self.refresh()
         finally:
             self.after(60_000, self._schedule)
-
 
 if __name__ == "__main__":
     try:
