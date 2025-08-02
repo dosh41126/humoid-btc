@@ -42,6 +42,10 @@ from math import log2, isclose
 from scipy.spatial.distance import cosine
 import re
 from statistics import median, mode
+import pandas as pd
+import mplfinance as mpf
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+
 import time
 try:
     import tenseal as ts
@@ -163,6 +167,46 @@ def sanitize_for_prompt(text: str, *, max_len: int = 2000) -> str:
     cleaned = sanitize_text(text, max_len=max_len)
     cleaned = _PROMPT_INJECTION_PAT.sub('', cleaned)
     return cleaned.strip()
+
+
+def fetch_btc_ohlc(minutes=15, bars=300) -> pd.DataFrame:
+    """
+    Fetch BTC-USD OHLC from Coinbase Exchange.
+    minutes: candle size (1,5,15,60,240,1440)
+    bars:    number of candles to fetch (max ~300 per call)
+    """
+    try:
+        gran = int(minutes) * 60
+        end_ts   = int(time.time())
+        start_ts = end_ts - gran * bars
+
+        url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        params = {"granularity": gran, "start": start_ts, "end": end_ts}
+        r = httpx.get(url, params=params, timeout=6.0)
+        r.raise_for_status()
+        # Each row: [ time, low, high, open, close, volume ]
+        raw = r.json()
+        if not raw:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(raw, columns=["time","low","high","open","close","volume"])
+        df["time"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_convert("US/Eastern")
+        df = df.sort_values("time").set_index("time")
+        df.rename(columns=str.capitalize, inplace=True)  # Open, High, Low, Close, Volume
+        return df[["Open","High","Low","Close","Volume"]]
+    except Exception as e:
+        logger.warning(f"[OHLC] {e}")
+        return pd.DataFrame()
+
+def add_ema_ribbon(df: pd.DataFrame, spans=(8,13,21,34,55,89)) -> pd.DataFrame:
+    for s in spans:
+        df[f"EMA{s}"] = df["Close"].ewm(span=s, adjust=False).mean()
+    lows  = df[[f"EMA{s}" for s in spans]].min(axis=1)
+    highs = df[[f"EMA{s}" for s in spans]].max(axis=1)
+    df["RIBBON_LOW"]  = lows
+    df["RIBBON_HIGH"] = highs
+    return df
+
 
 def sanitize_for_graphql_string(s: str, *, max_len: int = 512) -> str:
 
@@ -3086,10 +3130,19 @@ class App(customtkinter.CTk):
         else:
             print("Please enter a valid username.")
             
+    def _schedule_chart_refresh(self):
+        try:
+            self.chart_panel.refresh()
+        except Exception as e:
+            logger.warning(f"[Chart refresh] {e}")
+        finally:
+            self.after(60_000, self._schedule_chart_refresh)  # every 60s
+        
     def setup_gui(self):
         customtkinter.set_appearance_mode("Dark")
         self.title("Dyson Sphere Quantum Oracle")
-
+        
+        self._schedule_chart_refresh()
         window_width = 1920
         window_height = 1080
         screen_width = self.winfo_screenwidth()
@@ -3211,6 +3264,12 @@ class App(customtkinter.CTk):
         self.emotion_toggle = customtkinter.CTkSwitch(self.context_frame, text="Emotional Alignment")
         self.emotion_toggle.select()
         self.emotion_toggle.grid(row=5, column=2, columnspan=2, padx=5, pady=5)
+        # after your existing grid_columnconfigure lines
+        self.grid_columnconfigure(4, weight=1)
+
+        # Create the chart panel on the right
+        self.chart_panel = BTCChartPanel(self, corner_radius=10)
+        self.chart_panel.grid(row=0, column=4, rowspan=4, padx=(0, 20), pady=(20, 20), sticky="nsew")
 
         game_fields = [
             ("Game Type:", "game_type_entry", "e.g. Football"),
@@ -3223,6 +3282,103 @@ class App(customtkinter.CTk):
             entry = customtkinter.CTkEntry(self.context_frame, width=200, placeholder_text=placeholder)
             setattr(self, attr, entry)
             entry.grid(row=6 + idx, column=1, columnspan=3, padx=5, pady=5)
+
+class BTCChartPanel(customtkinter.CTkFrame):
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.figure = None
+        self.canvas = None
+        self.toolbar = None
+
+        # Control row
+        ctrl = customtkinter.CTkFrame(self)
+        ctrl.pack(side="top", fill="x", padx=8, pady=6)
+
+        self.interval = customtkinter.CTkComboBox(ctrl, values=["1","5","15","60","240","1440"], width=90)
+        self.interval.set("15")
+        self.interval.pack(side="left", padx=6)
+
+        self.refresh_btn = customtkinter.CTkButton(ctrl, text="Refresh", command=self.refresh)
+        self.refresh_btn.pack(side="left", padx=6)
+
+        # Figure area
+        self.fig_container = customtkinter.CTkFrame(self)
+        self.fig_container.pack(side="top", fill="both", expand=True)
+
+        self.refresh()
+
+    def _draw(self, df: pd.DataFrame):
+        if df.empty:
+            return
+
+        # Style
+        mc = mpf.make_marketcolors(
+            up="#26a69a", down="#ef5350",
+            wick="inherit", edge="inherit", volume="in"
+        )
+        style = mpf.make_mpf_style(
+            base_mpf_style="nightclouds",
+            marketcolors=mc,
+            facecolor="#101418",
+            edgecolor="#101418",
+            gridcolor="#2a2f36"
+        )
+
+        # Add EMA lines
+        spans = (8,13,21,34,55,89)
+        addplots = [mpf.make_addplot(df[f"EMA{s}"], color="#7aa2f7", width=1, alpha=0.8) for s in spans]
+
+        # Ribbon fill (between min/max EMA each bar)
+        addplots.append(
+            mpf.make_addplot(
+                df["RIBBON_LOW"],
+                color="none",
+                fill_between=dict(y1=df["RIBBON_LOW"], y2=df["RIBBON_HIGH"], alpha=0.12, color="#7aa2f7")
+            )
+        )
+
+        if self.figure is not None:
+            # clean old
+            self.figure.clf()
+
+        fig, _ = mpf.plot(
+            df,
+            type="candle",
+            style=style,
+            volume=True,
+            addplot=addplots,
+            returnfig=True,
+            figratio=(12,7),
+            figscale=1.05,
+            xrotation=15,
+            datetime_format="%m-%d %H:%M"
+        )
+        self.figure = fig
+
+        if self.canvas is None:
+            self.canvas = FigureCanvasTkAgg(self.figure, master=self.fig_container)
+            self.canvas.draw()
+            self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+            # Optional: toolbar
+            try:
+                tb_frame = customtkinter.CTkFrame(self.fig_container)
+                tb_frame.pack(side="bottom", fill="x")
+                self.toolbar = NavigationToolbar2Tk(self.canvas, tb_frame)
+                self.toolbar.update()
+            except Exception:
+                pass
+        else:
+            self.canvas.draw()
+
+    def refresh(self):
+        mins = int(self.interval.get())
+        df = fetch_btc_ohlc(minutes=mins, bars=300)
+        if df.empty:
+            logger.warning("[Chart] Empty OHLC; skipping draw.")
+            return
+        df = add_ema_ribbon(df)
+        self._draw(df)
+
 
 if __name__ == "__main__":
     try:
