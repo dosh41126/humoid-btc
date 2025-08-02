@@ -37,7 +37,7 @@ from argon2.low_level import hash_secret_raw, Type
 import bleach
 import httpx
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 from math import log2, isclose
 from scipy.spatial.distance import cosine
 import re
@@ -45,7 +45,9 @@ from statistics import median, mode
 import pandas as pd
 import mplfinance as mpf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
+import jwt  
 import time
 try:
     import tenseal as ts
@@ -168,35 +170,360 @@ def sanitize_for_prompt(text: str, *, max_len: int = 2000) -> str:
     cleaned = _PROMPT_INJECTION_PAT.sub('', cleaned)
     return cleaned.strip()
 
+# ---------- Account / Positions helpers (Advanced Trade v3) ----------
 
-def fetch_btc_ohlc(minutes=15, bars=300) -> pd.DataFrame:
+def _cb_bearer_headers() -> dict:
+    bearer = _coinbase_adv_bearer() or get_encrypted_env_var("COINBASE_API_KEY")
+    if not bearer:
+        raise RuntimeError("Coinbase Advanced Trade auth not configured.")
+    if not bearer.startswith("Bearer "):
+        bearer = f"Bearer {bearer}"
+    return {"Authorization": bearer}
+
+
+def fetch_advtrade_accounts(limit: int = 250) -> list[dict]:
     """
-    Fetch BTC-USD OHLC from Coinbase Exchange.
-    minutes: candle size (1,5,15,60,240,1440)
-    bars:    number of candles to fetch (max ~300 per call)
+    List spot accounts & balances (Advanced Trade).
+    """
+    try:
+        url = "https://api.coinbase.com/api/v3/brokerage/accounts"
+        r = httpx.get(url, headers=_cb_bearer_headers(), params={"limit": limit}, timeout=6.0)
+        r.raise_for_status()
+        return r.json().get("accounts", []) or []
+    except Exception as e:
+        logger.warning(f"[AdvTrade Accounts] {e}")
+        return []
+
+def fetch_futures_balance_summary() -> dict:
+    """
+    Get CFM (US futures) balance summary: includes cfm_usd_balance, unrealized_pnl, etc.
+    """
+    try:
+        url = "https://api.coinbase.com/api/v3/brokerage/cfm/balance_summary"
+        r = httpx.get(url, headers=_cb_bearer_headers(), timeout=6.0)
+        r.raise_for_status()
+        return r.json().get("balance_summary", {}) or {}
+    except Exception as e:
+        logger.warning(f"[Futures Balance] {e}")
+        return {}
+
+def fetch_futures_positions() -> list[dict]:
+    """
+    List open CFM futures positions with number_of_contracts.
+    """
+    try:
+        url = "https://api.coinbase.com/api/v3/brokerage/cfm/positions"
+        r = httpx.get(url, headers=_cb_bearer_headers(), timeout=6.0)
+        r.raise_for_status()
+        return r.json().get("positions", []) or []
+    except Exception as e:
+        logger.warning(f"[Futures Positions] {e}")
+        return []
+
+# ---------- Lightweight pricing for spot valuation ----------
+
+_CG_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "USDC": "usd-coin",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche-2",
+    "ATOM": "cosmos",
+    "ARB": "arbitrum",
+    "OP": "optimism",
+}
+
+def _price_usd_coinbase(symbol: str) -> Optional[float]:
+    """
+    Try Coinbase v2 simple spot price (broad asset coverage).
+    """
+    try:
+        url = f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot"
+        r = httpx.get(url, timeout=4.0)
+        r.raise_for_status()
+        return float(r.json()["data"]["amount"])
+    except Exception:
+        return None
+
+def _price_usd_coingecko(symbol: str) -> Optional[float]:
+    try:
+        if symbol.upper() == "USDC":
+            return 1.0
+        cg = _CG_IDS.get(symbol.upper())
+        if not cg:
+            return None
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        r = httpx.get(url, params={"ids": cg, "vs_currencies": "usd"}, timeout=5.0)
+        r.raise_for_status()
+        return float(r.json().get(cg, {}).get("usd", None))
+    except Exception:
+        return None
+
+def get_usd_price(symbol: str) -> Optional[float]:
+    p = _price_usd_coinbase(symbol)
+    if p is None:
+        p = _price_usd_coingecko(symbol)
+    return p
+
+def compute_account_overview() -> Dict[str, float | int | list[tuple[str, float]]]:
+    """
+    Aggregates:
+      - spot_usd_cash: USD account balance
+      - spot_crypto_value_usd: USD value of non-USD spot assets
+      - futures_usd_cash: cfm_usd_balance (futures)
+      - futures_unrealized_pnl: current unrealized PnL
+      - futures_contracts_open: total number_of_contracts across open positions
+      - futures_positions_count: count of open positions
+      - spot_nonusd_positions: list[(symbol, qty)] for non-zero balances (non-USD)
+      - total_account_value_usd: spot_usd_cash + spot_crypto_value_usd + futures_usd_cash + unrealized_pnl
+    """
+    # Spot accounts
+    accts = fetch_advtrade_accounts()
+    spot_usd_cash = 0.0
+    spot_nonusd_positions: list[tuple[str, float]] = []
+
+    for a in accts:
+        cur = (a.get("currency") or "").upper()
+        bal = a.get("available_balance", {})
+        try:
+            qty = float(bal.get("value", 0) or 0)
+        except Exception:
+            qty = 0.0
+        if qty <= 0:
+            continue
+        if cur == "USD":
+            spot_usd_cash += qty
+        else:
+            spot_nonusd_positions.append((cur, qty))
+
+    # Value spot non-USD
+    spot_crypto_value_usd = 0.0
+    for sym, qty in spot_nonusd_positions:
+        price = get_usd_price(sym) or 0.0
+        spot_crypto_value_usd += qty * price
+
+    # Futures balances
+    fut = fetch_futures_balance_summary()
+    def _num(d: dict, key: str) -> float:
+        try:
+            return float(d.get(key, {}).get("value", 0) or 0)
+        except Exception:
+            return 0.0
+    futures_usd_cash = _num(fut, "cfm_usd_balance")
+    futures_unrealized_pnl = _num(fut, "unrealized_pnl")
+
+    # Futures positions
+    pos = fetch_futures_positions()
+    fut_contracts_open = 0.0
+    fut_positions_count = 0
+    for p in pos:
+        try:
+            n = abs(float(p.get("number_of_contracts", "0") or "0"))
+        except Exception:
+            n = 0.0
+        if n > 0:
+            fut_positions_count += 1
+            fut_contracts_open += n
+
+    total_account_value_usd = spot_usd_cash + spot_crypto_value_usd + futures_usd_cash + futures_unrealized_pnl
+
+    return {
+        "spot_usd_cash": spot_usd_cash,
+        "spot_crypto_value_usd": spot_crypto_value_usd,
+        "futures_usd_cash": futures_usd_cash,
+        "futures_unrealized_pnl": futures_unrealized_pnl,
+        "futures_contracts_open": fut_contracts_open,
+        "futures_positions_count": fut_positions_count,
+        "spot_nonusd_positions": spot_nonusd_positions,
+        "total_account_value_usd": total_account_value_usd,
+    }
+
+
+def _coinbase_adv_bearer() -> str:
+    """
+    Build a short-lived ES256 JWT for Coinbase Advanced Trade REST.
+    Env:
+      COINBASE_ADV_API_KEY      -> API key ID (kid)
+      COINBASE_ADV_PRIVATE_KEY  -> ECDSA private key (PEM string, PKCS8)
+    """
+    try:
+        if jwt is None:
+            logger.warning("[CDP Auth] PyJWT not installed.")
+            return ""
+        api_key = os.getenv("COINBASE_ADV_API_KEY", "").strip()
+        priv_pem = os.getenv("COINBASE_ADV_PRIVATE_KEY", "").strip()
+        if not api_key or not priv_pem:
+            return ""
+        now = int(time.time())
+        payload = {
+            "iss": api_key,
+            "sub": api_key,
+            "iat": now,
+            "exp": now + 55,
+            "nbf": now,
+            "aud": "retail_rest_api",
+        }
+        token = jwt.encode(payload, priv_pem, algorithm="ES256", headers={"kid": api_key})
+        return f"Bearer {token}"
+    except Exception as e:
+        logger.warning(f"[CDP Auth] {e}")
+        return ""
+
+
+def _granularity_for(minutes: int) -> str:
+    """
+    Coinbase Advanced Trade candle granularities (enum).
+    """
+    m = int(minutes)
+    return {
+        1: "ONE_MINUTE",
+        5: "FIVE_MINUTE",
+        15: "FIFTEEN_MINUTE",
+        30: "THIRTY_MINUTE",
+        60: "ONE_HOUR",
+        120: "TWO_HOUR",
+        360: "SIX_HOUR",
+        1440: "ONE_DAY",
+    }.get(m, "ONE_HOUR")
+
+
+def _parse_cdp_candles(candles: list) -> pd.DataFrame:
+    """
+    Parse Advanced Trade public product candles:
+    item: {"start":"<unix>", "low":"", "high":"", "open":"", "close":"", "volume":""}
+    """
+    if not candles:
+        return pd.DataFrame()
+    df = pd.DataFrame(candles)
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c.capitalize()] = pd.to_numeric(df.get(c), errors="coerce")
+    df["time"] = pd.to_datetime(pd.to_numeric(df["start"], errors="coerce"), unit="s", utc=True).dt.tz_convert("US/Eastern")
+    df = df.set_index("time").sort_index()
+    return df[["Open", "High", "Low", "Close", "Volume"]]
+
+
+def _spot_ohlc(product_id: str, minutes=15, bars=300) -> pd.DataFrame:
+    """
+    SPOT via Coinbase Exchange public API: /products/{id}/candles (no auth).
     """
     try:
         gran = int(minutes) * 60
-        end_ts   = int(time.time())
+        end_ts = int(time.time())
         start_ts = end_ts - gran * bars
-
-        url = "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        url = f"https://api.exchange.coinbase.com/products/{product_id}/candles"
         params = {"granularity": gran, "start": start_ts, "end": end_ts}
         r = httpx.get(url, params=params, timeout=6.0)
         r.raise_for_status()
-        # Each row: [ time, low, high, open, close, volume ]
-        raw = r.json()
+        raw = r.json()  # [time, low, high, open, close, volume]
         if not raw:
             return pd.DataFrame()
-
-        df = pd.DataFrame(raw, columns=["time","low","high","open","close","volume"])
+        df = pd.DataFrame(raw, columns=["time", "Low", "High", "Open", "Close", "Volume"])
         df["time"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_convert("US/Eastern")
         df = df.sort_values("time").set_index("time")
-        df.rename(columns=str.capitalize, inplace=True)  # Open, High, Low, Close, Volume
-        return df[["Open","High","Low","Close","Volume"]]
+        return df[["Open", "High", "Low", "Close", "Volume"]]
     except Exception as e:
-        logger.warning(f"[OHLC] {e}")
+        logger.warning(f"[Coinbase Spot {product_id}] {e}")
         return pd.DataFrame()
+
+
+def fetch_coinbase_perp_ohlc(product_id: str = "ETH-PERP", minutes=15, bars=300) -> pd.DataFrame:
+    """
+    PERPETUAL FUTURES via Coinbase Advanced Trade:
+      GET /api/v3/brokerage/market/products/{product_id}/candles
+    Requires ES256 JWT in Authorization: Bearer <token>.
+    """
+    try:
+        bearer = _coinbase_adv_bearer()
+        if not bearer:
+            logger.warning("[Perp OHLC] Missing Advanced Trade credentials.")
+            return pd.DataFrame()
+
+        url = f"https://api.coinbase.com/api/v3/brokerage/market/products/{product_id}/candles"
+        end_ts = int(time.time())
+        start_ts = end_ts - int(minutes) * 60 * int(bars)
+        gran = _granularity_for(minutes)
+
+        params = {
+            "start": str(start_ts),
+            "end": str(end_ts),
+            "granularity": gran,
+            "limit": min(350, int(bars)),
+        }
+        headers = _cb_bearer_headers()
+        r = httpx.get(url, headers=headers, params=params, timeout=6.0)
+        r.raise_for_status()
+        candles = r.json().get("candles", [])
+        df = _parse_cdp_candles(candles)
+        if df.empty:
+            return df
+
+        # If requested interval not an exact enum, resample.
+        if minutes not in (1, 5, 15, 30, 60, 120, 360, 1440):
+            rule = f"{int(minutes)}T"
+            df = (
+                df.resample(rule)
+                  .agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"})
+            ).dropna(how="any")
+        return df.tail(bars)
+    except Exception as e:
+        logger.warning(f"[Coinbase Perp {product_id}] {e}")
+        return pd.DataFrame()
+
+
+def fetch_coingecko_ohlc(coingecko_id: str, minutes=15, bars=300) -> pd.DataFrame:
+    """
+    Fallback OHLC via CoinGecko; resampled; Volume synthesized as 0.
+    """
+    try:
+        window_days = math.ceil((minutes * bars) / (24 * 60))
+        allowed = [1, 7, 14, 30, 90, 180, 365]
+        days = next((d for d in allowed if d >= window_days), allowed[-1])
+        url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}/ohlc"
+        params = {"vs_currency": "usd", "days": str(days)}
+        r = httpx.get(url, params=params, timeout=6.0)
+        r.raise_for_status()
+        raw = r.json()  # [t_ms, o, h, l, c]
+        if not raw:
+            return pd.DataFrame()
+        df = pd.DataFrame(raw, columns=["time_ms", "Open", "High", "Low", "Close"])
+        df["time"] = pd.to_datetime(df["time_ms"], unit="ms", utc=True).dt.tz_convert("US/Eastern")
+        df = df.drop(columns=["time_ms"]).set_index("time").sort_index()
+        rule = f"{int(minutes)}T"
+        df = df.resample(rule).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"})
+        df.dropna(how="any", inplace=True)
+        df["Volume"] = 0.0
+        return df.tail(bars)
+    except Exception as e:
+        logger.warning(f"[CG OHLC {coingecko_id}] {e}")
+        return pd.DataFrame()
+
+
+def fetch_ohlc_with_fallback(market: str, minutes=15, bars=300) -> pd.DataFrame:
+    """
+    market keys:
+      'BTC-USD'  -> Coinbase spot; CG fallback 'bitcoin'
+      'ETH-USD'  -> Coinbase spot; CG fallback 'ethereum'
+      'ETH-PERP' -> Coinbase Advanced Trade perps (ETH-PERP); fallback to ETH spot
+    """
+    if market == "BTC-USD":
+        df = fetch_coinbase_spot_ohlc("BTC-USD", minutes, bars)
+        return df if not df.empty else fetch_coingecko_ohlc("bitcoin", minutes, bars)
+
+    if market == "ETH-USD":
+        df = fetch_coinbase_spot_ohlc("ETH-USD", minutes, bars)
+        return df if not df.empty else fetch_coingecko_ohlc("ethereum", minutes, bars)
+
+    if market == "ETH-PERP":
+        df = fetch_coinbase_perp_ohlc("ETH-PERP", minutes, bars)
+        if not df.empty:
+            return df
+        logger.warning("[OHLC] ETH-PERP empty; falling back to ETH spot.")
+        return fetch_coinbase_spot_ohlc("ETH-USD", minutes, bars)
+
+    # default
+    return fetch_coinbase_spot_ohlc("BTC-USD", minutes, bars)
 
 def add_ema_ribbon(df: pd.DataFrame, spans=(8,13,21,34,55,89)) -> pd.DataFrame:
     for s in spans:
@@ -999,26 +1326,23 @@ def fetch_coinbase_spot_positions() -> list[dict]:
 
 def fetch_coinbase_derivative_positions() -> list[dict]:
     try:
-        API_KEY = get_encrypted_env_var("COINBASE_API_KEY")
-        headers = {"Authorization": f"Bearer {API_KEY}"}
+        headers = _cb_bearer_headers()
         url = "https://api.coinbase.com/api/v3/brokerage/cfm/positions"
         resp = httpx.get(url, headers=headers, timeout=5)
         resp.raise_for_status()
-        data = resp.json().get("data", [])
+        items = resp.json().get("positions", []) or []
         results = []
-        for pos in data:
-            if float(pos.get("size", 0)) != 0:
-                sym = pos.get("symbol")
-                size = pos.get("size")
-                results.append({
-                    "symbol": sym,
-                    "size": float(size),
-                    "context": f"Derivative position: {size} {sym}"
-                })
+        for p in items:
+            n = float(p.get("number_of_contracts", "0") or "0")
+            if n != 0.0:
+                sym = p.get("symbol") or p.get("product_id")
+                results.append({"symbol": sym, "size": n,
+                                "context": f"Derivative position: {n} {sym}"})
         return results
     except Exception as e:
         logger.warning(f"[Coinbase Derivatives API] {e}")
         return []
+
 
 def setup_weaviate_schema(client):
     try:
@@ -3142,7 +3466,18 @@ class App(customtkinter.CTk):
         customtkinter.set_appearance_mode("Dark")
         self.title("Dyson Sphere Quantum Oracle")
         
-        self._schedule_chart_refresh()
+
+
+        self.chart_panel = BTCChartPanel(self, corner_radius=10)
+        self.chart_panel.grid(row=0, column=4, rowspan=4, padx=(0, 20), pady=(20, 20), sticky="nsew")
+
+        # Schedule periodic refresh (every 60s) AFTER panel exists
+        self.after(60_000, self._schedule_chart_refresh)
+
+
+        # add this just after the chart:
+        self.account_panel = AccountOverviewPanel(self, corner_radius=10)
+        self.account_panel.grid(row=4, column=4, padx=(0, 20), pady=(0, 20), sticky="nsew")
         window_width = 1920
         window_height = 1080
         screen_width = self.winfo_screenwidth()
@@ -3264,12 +3599,9 @@ class App(customtkinter.CTk):
         self.emotion_toggle = customtkinter.CTkSwitch(self.context_frame, text="Emotional Alignment")
         self.emotion_toggle.select()
         self.emotion_toggle.grid(row=5, column=2, columnspan=2, padx=5, pady=5)
-        # after your existing grid_columnconfigure lines
+
         self.grid_columnconfigure(4, weight=1)
 
-        # Create the chart panel on the right
-        self.chart_panel = BTCChartPanel(self, corner_radius=10)
-        self.chart_panel.grid(row=0, column=4, rowspan=4, padx=(0, 20), pady=(20, 20), sticky="nsew")
 
         game_fields = [
             ("Game Type:", "game_type_entry", "e.g. Football"),
@@ -3284,17 +3616,35 @@ class App(customtkinter.CTk):
             entry.grid(row=6 + idx, column=1, columnspan=3, padx=5, pady=5)
 
 class BTCChartPanel(customtkinter.CTkFrame):
+    """
+    Chart panel supporting BTC-USD (spot), ETH-USD (spot), ETH-PERP (Coinbase futures).
+    Reuses a single Matplotlib Figure/Axes; background thread fetch; EMA ribbon overlay.
+    """
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.figure = None
         self.canvas = None
         self.toolbar = None
+        self.ax = None
+        self.axv = None
 
-        # Control row
+        # Controls
         ctrl = customtkinter.CTkFrame(self)
         ctrl.pack(side="top", fill="x", padx=8, pady=6)
 
-        self.interval = customtkinter.CTkComboBox(ctrl, values=["1","5","15","60","240","1440"], width=90)
+        self.market = customtkinter.CTkComboBox(
+            ctrl,
+            values=["BTC-USD (Spot)", "ETH-USD (Spot)", "ETH-PERP (Futures, Coinbase)"],
+            width=220,
+            command=lambda _=None: self.refresh()
+        )
+        self.market.set("BTC-USD (Spot)")
+        self.market.pack(side="left", padx=6)
+
+        self.interval = customtkinter.CTkComboBox(
+            ctrl, values=["1","5","15","60","360","1440"], width=90,
+            command=lambda _=None: self.refresh()
+        )
         self.interval.set("15")
         self.interval.pack(side="left", padx=6)
 
@@ -3305,79 +3655,157 @@ class BTCChartPanel(customtkinter.CTkFrame):
         self.fig_container = customtkinter.CTkFrame(self)
         self.fig_container.pack(side="top", fill="both", expand=True)
 
-        self.refresh()
+        # Build single Figure/Axes once
+        self.figure = Figure(figsize=(10, 6), dpi=100)
+        gs = GridSpec(nrows=2, ncols=1, height_ratios=[3, 1], figure=self.figure)
+        self.ax = self.figure.add_subplot(gs[0])
+        self.axv = self.figure.add_subplot(gs[1], sharex=self.ax)
+
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self.fig_container)
+        self.canvas.draw_idle()
+        self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+
+        try:
+            tb_frame = customtkinter.CTkFrame(self.fig_container)
+            tb_frame.pack(side="bottom", fill="x")
+            self.toolbar = NavigationToolbar2Tk(self.canvas, tb_frame)
+            self.toolbar.update()
+        except Exception:
+            pass
+
+        self.refresh()  # initial draw
+
+    def _market_key(self) -> str:
+        label = self.market.get()
+        if label.startswith("BTC-USD"): return "BTC-USD"
+        if label.startswith("ETH-USD"): return "ETH-USD"
+        if label.startswith("ETH-PERP"): return "ETH-PERP"
+        return "BTC-USD"
 
     def _draw(self, df: pd.DataFrame):
+        # Style
+        mc = mpf.make_marketcolors(up="#26a69a", down="#ef5350", wick="inherit", edge="inherit", volume="in")
+        style = mpf.make_mpf_style(base_mpf_style="nightclouds", marketcolors=mc,
+                                   facecolor="#101418", edgecolor="#101418", gridcolor="#2a2f36")
+
+        self.ax.clear(); self.axv.clear()
+
         if df.empty:
+            self.ax.text(0.5, 0.5, "No data", color="w", ha="center", va="center", transform=self.ax.transAxes)
+            self.ax.set_title(f"{self.market.get()} · {self.interval.get()}m", color="w", pad=8)
+            self.canvas.draw_idle()
             return
 
-        # Style
-        mc = mpf.make_marketcolors(
-            up="#26a69a", down="#ef5350",
-            wick="inherit", edge="inherit", volume="in"
-        )
-        style = mpf.make_mpf_style(
-            base_mpf_style="nightclouds",
-            marketcolors=mc,
-            facecolor="#101418",
-            edgecolor="#101418",
-            gridcolor="#2a2f36"
-        )
-
-        # Add EMA lines
-        spans = (8,13,21,34,55,89)
-        addplots = [mpf.make_addplot(df[f"EMA{s}"], color="#7aa2f7", width=1, alpha=0.8) for s in spans]
-
-        # Ribbon fill (between min/max EMA each bar)
+        # EMA ribbon
+        spans = (8, 13, 21, 34, 55, 89)
+        addplots = [mpf.make_addplot(df[f"EMA{s}"], ax=self.ax, color="#7aa2f7", width=1, alpha=0.8) for s in spans]
         addplots.append(
             mpf.make_addplot(
-                df["RIBBON_LOW"],
-                color="none",
+                df["RIBBON_LOW"], ax=self.ax, color="none",
                 fill_between=dict(y1=df["RIBBON_LOW"], y2=df["RIBBON_HIGH"], alpha=0.12, color="#7aa2f7")
             )
         )
 
-        if self.figure is not None:
-            # clean old
-            self.figure.clf()
+        mpf.plot(df, type="candle", style=style,
+                 ax=self.ax, volume=self.axv,
+                 addplot=addplots, xrotation=15, datetime_format="%m-%d %H:%M")
 
-        fig, _ = mpf.plot(
-            df,
-            type="candle",
-            style=style,
-            volume=True,
-            addplot=addplots,
-            returnfig=True,
-            figratio=(12,7),
-            figscale=1.05,
-            xrotation=15,
-            datetime_format="%m-%d %H:%M"
-        )
-        self.figure = fig
-
-        if self.canvas is None:
-            self.canvas = FigureCanvasTkAgg(self.figure, master=self.fig_container)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
-            # Optional: toolbar
-            try:
-                tb_frame = customtkinter.CTkFrame(self.fig_container)
-                tb_frame.pack(side="bottom", fill="x")
-                self.toolbar = NavigationToolbar2Tk(self.canvas, tb_frame)
-                self.toolbar.update()
-            except Exception:
-                pass
-        else:
-            self.canvas.draw()
+        self.ax.set_title(f"{self.market.get()} · {self.interval.get()}m", color="w", pad=8)
+        self.canvas.draw_idle()
 
     def refresh(self):
         mins = int(self.interval.get())
-        df = fetch_btc_ohlc(minutes=mins, bars=300)
-        if df.empty:
-            logger.warning("[Chart] Empty OHLC; skipping draw.")
-            return
-        df = add_ema_ribbon(df)
-        self._draw(df)
+        market = self._market_key()
+        threading.Thread(target=self._refresh_bg, args=(market, mins), daemon=True).start()
+
+    def _refresh_bg(self, market: str, mins: int):
+        df = fetch_ohlc_with_fallback(market=market, minutes=mins, bars=300)
+        if not df.empty:
+            df = add_ema_ribbon(df)  # your existing helper
+        self.after(0, lambda: self._draw(df))
+
+
+class AccountOverviewPanel(customtkinter.CTkFrame):
+    """
+    Small dashboard: total account value, spot USD, spot crypto USD value,
+    futures USD, open futures contracts & positions, plus a short spot holdings list.
+    """
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+
+        self.title_lbl  = customtkinter.CTkLabel(self, text="Account Overview", font=customtkinter.CTkFont(size=18, weight="bold"))
+        self.total_lbl  = customtkinter.CTkLabel(self, text="Total Value: —", anchor="w")
+        self.spot_usd   = customtkinter.CTkLabel(self, text="Spot USD: —", anchor="w")
+        self.spot_val   = customtkinter.CTkLabel(self, text="Spot Crypto (USD): —", anchor="w")
+        self.fut_usd    = customtkinter.CTkLabel(self, text="Futures USD: —", anchor="w")
+        self.fut_pnl    = customtkinter.CTkLabel(self, text="Futures Unrealized PnL: —", anchor="w")
+        self.fut_open   = customtkinter.CTkLabel(self, text="Open Futures: — positions / — contracts", anchor="w")
+        self.holdings_t = customtkinter.CTkLabel(self, text="Spot Holdings:", anchor="w")
+        self.holdings   = customtkinter.CTkTextbox(self, height=90)
+        self.holdings.configure(state="disabled")
+
+        pad = dict(padx=8, pady=3, sticky="w")
+        self.title_lbl.grid(row=0, column=0, padx=8, pady=(8,4), sticky="w")
+        self.total_lbl.grid(row=1, column=0, **pad)
+        self.spot_usd.grid(row=2, column=0, **pad)
+        self.spot_val.grid(row=3, column=0, **pad)
+        self.fut_usd.grid(row=4, column=0, **pad)
+        self.fut_pnl.grid(row=5, column=0, **pad)
+        self.fut_open.grid(row=6, column=0, **pad)
+        self.holdings_t.grid(row=7, column=0, **pad)
+        self.holdings.grid(row=8, column=0, padx=8, pady=(0,8), sticky="nsew")
+        self.grid_rowconfigure(8, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # initial draw + schedule
+        self.refresh()
+        self.after(60_000, self._schedule)
+
+    @staticmethod
+    def _fmt_money(x: float) -> str:
+        try:
+            return f"${x:,.2f}"
+        except Exception:
+            return "—"
+
+    @staticmethod
+    def _fmt_int(x: float | int) -> str:
+        try:
+            return f"{int(x)}"
+        except Exception:
+            return "—"
+
+    def refresh(self):
+        try:
+            ov = compute_account_overview()
+            self.total_lbl.configure(text=f"Total Value: {self._fmt_money(ov['total_account_value_usd'])}")
+            self.spot_usd.configure(text=f"Spot USD: {self._fmt_money(ov['spot_usd_cash'])}")
+            self.spot_val.configure(text=f"Spot Crypto (USD): {self._fmt_money(ov['spot_crypto_value_usd'])}")
+            self.fut_usd.configure(text=f"Futures USD: {self._fmt_money(ov['futures_usd_cash'])}")
+            self.fut_pnl.configure(text=f"Futures Unrealized PnL: {self._fmt_money(ov['futures_unrealized_pnl'])}")
+            self.fut_open.configure(
+                text=f"Open Futures: {self._fmt_int(ov['futures_positions_count'])} positions / "
+                     f"{self._fmt_int(ov['futures_contracts_open'])} contracts"
+            )
+
+            # Show top 6 spot holdings (non-USD)
+            positions = sorted(ov["spot_nonusd_positions"], key=lambda t: t[0])[:6]
+            self.holdings.configure(state="normal")
+            self.holdings.delete("1.0", tk.END)
+            if positions:
+                for sym, qty in positions:
+                    self.holdings.insert(tk.END, f"{sym}: {qty:g}\n")
+            else:
+                self.holdings.insert(tk.END, "(none)")
+            self.holdings.configure(state="disabled")
+        except Exception as e:
+            logger.warning(f"[Account Panel] refresh failed: {e}")
+
+    def _schedule(self):
+        try:
+            self.refresh()
+        finally:
+            self.after(60_000, self._schedule)
 
 
 if __name__ == "__main__":
